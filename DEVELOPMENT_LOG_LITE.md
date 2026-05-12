@@ -212,10 +212,25 @@ The following were part of the Wasm architecture and are no longer needed:
 
 ---
 
-## 9. Startup
+## 9. Version Control & GitHub
+
+**Repository**: [github.com/akaradje/Liquid-State-Engine](https://github.com/akaradje/Liquid-State-Engine)
+
+- **Branch**: `main`
+- **Commit**: `Initial release: Ultra-Lite Logical Alchemy Engine (DOM-based)`
+- **Visibility**: Public
+
+**Security**: `.env` files are excluded via `.gitignore`. API keys are never committed. The `.env.example` file documents required environment variables without exposing secrets.
+
+---
+
+## 10. Startup
 
 ```bash
-# Start the server (with or without AI key)
+git clone https://github.com/akaradje/Liquid-State-Engine.git
+cd Liquid-State-Engine
+npm install
+cp .env.example .env   # Edit .env with your DeepSeek API key
 npm run serve
 
 # Open http://localhost:8080/web/

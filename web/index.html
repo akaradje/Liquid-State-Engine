@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Liquid-State Engine</title>
+    <link rel="stylesheet" href="./hud/style.css">
     <style>
         * {
             margin: 0;
@@ -23,29 +24,36 @@
             height: 100vh;
             cursor: crosshair;
         }
+        /* Legacy HUD — hidden, still updates for Preact to read */
         #hud {
             position: fixed;
-            top: 12px;
-            left: 12px;
-            color: rgba(180, 220, 255, 0.8);
-            font-size: 11px;
-            line-height: 1.6;
+            top: 0;
+            left: 0;
             pointer-events: none;
-            text-shadow: 0 0 4px rgba(0, 100, 255, 0.3);
+            opacity: 0;
         }
-        #hud .label {
-            color: rgba(100, 160, 255, 0.6);
+        /* HUD React mount point */
+        #hud-app {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 1000;
         }
     </style>
 </head>
 <body>
     <canvas id="liquid-canvas"></canvas>
+    <!-- Legacy HUD (hidden, feeds stats to Preact) -->
     <div id="hud">
-        <div><span class="label">FPS:</span> <span id="fps">0</span></div>
-        <div><span class="label">NODES:</span> <span id="nodes">0</span></div>
-        <div><span class="label">DIRTY:</span> <span id="dirty">0x0</span></div>
-        <div><span class="label">ENGINE:</span> <span id="status">loading...</span></div>
+        <div><span id="fps">0</span></div>
+        <div><span id="nodes">0</span></div>
+        <div><span id="dirty">0x0</span></div>
+        <div><span id="status">loading...</span></div>
     </div>
+    <!-- Preact HUD mount -->
+    <div id="hud-app"></div>
+
     <script type="module" src="./main.js"></script>
+    <script type="module" src="./hud/app.js"></script>
 </body>
 </html>

@@ -1,0 +1,9 @@
+# Cargo configuration for the Liquid-State Engine
+
+[build]
+# Default target for this project
+target = "wasm32-unknown-unknown"
+
+[target.wasm32-unknown-unknown]
+# Optimize for size and speed
+rustflags = ["-C", "target-feature=+simd128"]

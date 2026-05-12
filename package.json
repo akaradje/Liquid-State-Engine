@@ -1,0 +1,25 @@
+{
+  "name": "liquid-state-engine",
+  "version": "0.1.0",
+  "description": "Interactive Visual Computing Platform - CPU-only, DOM-free rendering engine powered by Rust/WebAssembly",
+  "private": true,
+  "scripts": {
+    "build:wasm": "wasm-pack build --target web --out-dir pkg",
+    "build:wasm:release": "wasm-pack build --target web --out-dir pkg --release",
+    "dev": "npx http-server ./web -p 8080 --cors -c-1",
+    "serve": "npx http-server . -p 8080 --cors -c-1 -a 0.0.0.0",
+    "clean": "rm -rf pkg target"
+  },
+  "keywords": [
+    "wasm",
+    "webassembly",
+    "rust",
+    "canvas",
+    "ecs",
+    "rendering",
+    "cpu-rendering",
+    "interactive"
+  ],
+  "author": "Liquid-State Engine Team",
+  "license": "MIT"
+}

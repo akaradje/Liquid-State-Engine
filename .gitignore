@@ -1,0 +1,17 @@
+# Build artifacts
+/target/
+/pkg/
+/node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Wasm intermediate
+*.wasm.map

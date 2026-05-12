@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Liquid-State Engine</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+        }
+        #liquid-canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            cursor: crosshair;
+        }
+        #hud {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            color: rgba(180, 220, 255, 0.8);
+            font-size: 11px;
+            line-height: 1.6;
+            pointer-events: none;
+            text-shadow: 0 0 4px rgba(0, 100, 255, 0.3);
+        }
+        #hud .label {
+            color: rgba(100, 160, 255, 0.6);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="liquid-canvas"></canvas>
+    <div id="hud">
+        <div><span class="label">FPS:</span> <span id="fps">0</span></div>
+        <div><span class="label">NODES:</span> <span id="nodes">0</span></div>
+        <div><span class="label">DIRTY:</span> <span id="dirty">0x0</span></div>
+        <div><span class="label">ENGINE:</span> <span id="status">loading...</span></div>
+    </div>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

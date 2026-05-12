@@ -6,12 +6,15 @@
 //!
 //! Supports up to `max_entities` nodes with O(1) spawn/despawn via
 //! a free-list allocator.
+//!
+//! The `alive_list` enables O(active) iteration (skipping dead slots),
+//! which is critical for performance when capacity >> active count.
 
 /// The ECS World: holds all component arrays and entity lifecycle state.
 pub struct World {
     /// Maximum number of entities this world can hold.
     pub max_entities: usize,
-    
+
     // --- Lifecycle ---
     /// Whether each entity slot is alive.
     pub alive: Vec<bool>,
@@ -19,6 +22,9 @@ pub struct World {
     free_list: Vec<usize>,
     /// Number of currently active entities.
     active: usize,
+    /// Compact list of alive entity IDs for fast iteration.
+    /// spawn() appends, despawn() does swap-remove (O(1)).
+    alive_list: Vec<u32>,
 
     // --- Position Components (SoA) ---
     pub pos_x: Vec<f32>,
@@ -66,6 +72,7 @@ impl World {
             alive: vec![false; max_entities],
             free_list,
             active: 0,
+            alive_list: Vec::with_capacity(max_entities),
 
             pos_x: vec![0.0; max_entities],
             pos_y: vec![0.0; max_entities],
@@ -111,6 +118,7 @@ impl World {
             self.bitmask[id] = bitmask;
             self.radius[id] = radius;
             self.mass[id] = (bitmask.count_ones() as f32).max(1.0);
+            self.alive_list.push(id as u32);
             self.active += 1;
             id
         } else {
@@ -119,6 +127,7 @@ impl World {
     }
 
     /// Despawn an entity, returning its slot to the free list.
+    /// Uses swap-remove from alive_list for O(1) removal.
     pub fn despawn(&mut self, id: usize) {
         if id < self.max_entities && self.alive[id] {
             self.alive[id] = false;
@@ -128,6 +137,11 @@ impl World {
             self.force_y[id] = 0.0;
             self.free_list.push(id);
             self.active -= 1;
+
+            // Swap-remove from alive_list
+            if let Some(pos) = self.alive_list.iter().position(|&x| x == id as u32) {
+                self.alive_list.swap_remove(pos);
+            }
         }
     }
 
@@ -148,6 +162,12 @@ impl World {
     pub fn capacity(&self) -> usize {
         self.max_entities
     }
+
+    /// Iterate over the compact alive entity IDs (skip dead slots).
+    /// Returns a slice of u32 entity IDs, all guaranteed to be alive.
+    pub fn alive_iter(&self) -> &[u32] {
+        &self.alive_list
+    }
 }
 
 #[cfg(test)]
@@ -166,16 +186,20 @@ mod tests {
         assert_eq!(world.pos_x[id], 10.0);
         assert_eq!(world.pos_y[id], 20.0);
         assert_eq!(world.bitmask[id], 0b101);
-        assert_eq!(world.mass[id], 2.0); // popcount of 0b101 = 2
+        assert_eq!(world.mass[id], 2.0);
+        assert_eq!(world.alive_list.len(), 1);
+        assert_eq!(world.alive_list[0], id as u32);
 
         world.despawn(id);
         assert_eq!(world.active_count(), 0);
         assert!(!world.alive[id]);
+        assert_eq!(world.alive_list.len(), 0);
 
         // Re-spawn in the freed slot
         let id2 = world.spawn(0.0, 0.0, 0.0, 0.0, 0, 0, 0, 255, 0, 4.0);
-        assert_eq!(id2, id); // Should reuse the freed slot
+        assert_eq!(id2, id);
         assert_eq!(world.active_count(), 1);
+        assert_eq!(world.alive_list.len(), 1);
     }
 
     #[test]
@@ -199,5 +223,23 @@ mod tests {
         world.apply_force(id, 5.0, -5.0);
         assert_eq!(world.force_x[id], 15.0);
         assert_eq!(world.force_y[id], 15.0);
+    }
+
+    #[test]
+    fn alive_list_tracks_correctly() {
+        let mut world = World::new(100);
+        let _id1 = world.spawn(0.0, 0.0, 0.0, 0.0, 0, 0, 0, 255, 1, 5.0);
+        let id2 = world.spawn(0.0, 0.0, 0.0, 0.0, 0, 0, 0, 255, 1, 5.0);
+        let _id3 = world.spawn(0.0, 0.0, 0.0, 0.0, 0, 0, 0, 255, 1, 5.0);
+
+        assert_eq!(world.alive_iter().len(), 3);
+
+        // Remove the middle one
+        world.despawn(id2);
+        assert_eq!(world.alive_iter().len(), 2);
+
+        // The alive_list should contain id1 and id3 (order may vary due to swap_remove)
+        let alive: Vec<u32> = world.alive_iter().to_vec();
+        alive.iter().for_each(|&id| assert!(world.alive[id as usize]));
     }
 }

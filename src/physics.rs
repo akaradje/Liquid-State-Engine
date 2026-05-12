@@ -20,6 +20,19 @@ pub struct PhysicsSystem {
 
     /// Maximum velocity magnitude (speed limit).
     pub max_speed: f32,
+
+    /// Spring stiffness for pinned-drag (pixels/sec^2 per pixel offset).
+    pub spring_stiffness: f32,
+
+    /// Damping coefficient for pinned-drag spring.
+    pub spring_damping: f32,
+
+    /// Per-entity: is this node pinned to cursor?
+    pinned: Vec<bool>,
+    /// Per-entity: cursor target X for pinned nodes.
+    pin_target_x: Vec<f32>,
+    /// Per-entity: cursor target Y for pinned nodes.
+    pin_target_y: Vec<f32>,
 }
 
 impl PhysicsSystem {
@@ -30,6 +43,46 @@ impl PhysicsSystem {
             bounce: 0.7,       // Moderate bounce off walls
             gravity_y: 0.0,    // No gravity by default (floating workspace)
             max_speed: 1000.0, // Reasonable speed cap
+            spring_stiffness: 300.0,
+            spring_damping: 8.0,
+            pinned: Vec::new(),
+            pin_target_x: Vec::new(),
+            pin_target_y: Vec::new(),
+        }
+    }
+
+    /// Ensure pin arrays are sized for the world.
+    fn ensure_pin_capacity(&mut self, max_entities: usize) {
+        if self.pinned.len() < max_entities {
+            self.pinned.resize(max_entities, false);
+            self.pin_target_x.resize(max_entities, 0.0);
+            self.pin_target_y.resize(max_entities, 0.0);
+        }
+    }
+
+    /// Pin a node to be pulled toward cursor position by a damped spring.
+    pub fn pin_node(&mut self, world: &mut World, id: usize, cursor_x: f32, cursor_y: f32) {
+        if id < world.max_entities && world.alive[id] {
+            self.ensure_pin_capacity(world.max_entities);
+            self.pinned[id] = true;
+            self.pin_target_x[id] = cursor_x;
+            self.pin_target_y[id] = cursor_y;
+        }
+    }
+
+    /// Unpin a node.
+    pub fn unpin_node(&mut self, world: &mut World, id: usize) {
+        if id < world.max_entities {
+            self.ensure_pin_capacity(world.max_entities);
+            self.pinned[id] = false;
+        }
+    }
+
+    /// Update cursor position for a pinned node.
+    pub fn update_pin_target(&mut self, world: &mut World, id: usize, cursor_x: f32, cursor_y: f32) {
+        if id < world.max_entities && self.pinned.len() > id {
+            self.pin_target_x[id] = cursor_x;
+            self.pin_target_y[id] = cursor_y;
         }
     }
 
@@ -39,7 +92,9 @@ impl PhysicsSystem {
     /// - First update velocity from forces
     /// - Then update position from new velocity
     /// This is more stable than explicit Euler for oscillatory systems.
-    pub fn update(&self, world: &mut World, dt: f32, bounds_w: f32, bounds_h: f32) {
+    pub fn update(&mut self, world: &mut World, dt: f32, bounds_w: f32, bounds_h: f32) {
+        self.ensure_pin_capacity(world.max_entities);
+
         for i in 0..world.max_entities {
             if !world.alive[i] {
                 continue;
@@ -54,6 +109,17 @@ impl PhysicsSystem {
 
             world.vel_x[i] += ax * dt;
             world.vel_y[i] += ay * dt;
+
+            // Spring force for pinned nodes (damped spring toward cursor)
+            if i < self.pinned.len() && self.pinned[i] {
+                let offset_x = self.pin_target_x[i] - world.pos_x[i];
+                let offset_y = self.pin_target_y[i] - world.pos_y[i];
+                // F = -k * x - d * v  (Hooke's law + damping)
+                let fx = self.spring_stiffness * offset_x - self.spring_damping * world.vel_x[i];
+                let fy = self.spring_stiffness * offset_y - self.spring_damping * world.vel_y[i];
+                world.vel_x[i] += fx * inv_mass * dt;
+                world.vel_y[i] += fy * inv_mass * dt;
+            }
 
             // Apply viscosity (velocity-dependent drag)
             world.vel_x[i] *= 1.0 - self.viscosity;

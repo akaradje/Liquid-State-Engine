@@ -91,6 +91,16 @@
 .hud-ok {
   color: rgba(80, 255, 180, 0.8);
 }
+.hud-trust {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hud-trust-bar {
+  font-size: 8px;
+  letter-spacing: -1px;
+  color: rgba(140, 200, 255, 0.5);
+}
 .hud-val-sm {
   font-size: 9px;
   max-width: 160px;

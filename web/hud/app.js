@@ -16,6 +16,7 @@ class HUDApp extends Component {
     super();
     this.state = {
       nodeCount: 0,
+      avgConfidence: 0,
     };
     this._tick = this._tick.bind(this);
   }
@@ -30,13 +31,28 @@ class HUDApp extends Component {
 
   _tick() {
     const count = window.lse?.getNodeCount?.() ?? 0;
-    this.setState({ nodeCount: count });
+    let avgConf = 0;
+    const els = document.querySelectorAll('.data-box[data-confidence]');
+    if (els.length > 0) {
+      let sum = 0;
+      for (const el of els) {
+        sum += parseFloat(el.dataset.confidence) || 0;
+      }
+      avgConf = Math.round((sum / els.length) * 100);
+    }
+    this.setState({ nodeCount: count, avgConfidence: avgConf });
+  }
+
+  _trustBar(pct) {
+    const filled = Math.round(pct / 10);
+    return '█'.repeat(Math.max(0, Math.min(10, filled))) +
+           '░'.repeat(Math.max(0, 10 - filled));
   }
 
   render(_, state) {
     return html`
       <div class="hud-root">
-        <${StatsPanel} nodes=${state.nodeCount} />
+        <${StatsPanel} nodes=${state.nodeCount} trust=${state.avgConfidence} trustBar=${this._trustBar(state.avgConfidence)} />
         <${InfoPanel} />
       </div>
     `;
@@ -45,9 +61,16 @@ class HUDApp extends Component {
 
 // ---- Stats Panel (top-left) ----
 
-const StatsPanel = ({ nodes }) => html`
+const StatsPanel = ({ nodes, trust, trustBar }) => html`
   <div class="hud-panel hud-top-left">
     <div class="hud-stat"><span class="hud-label">NODES</span> <span class="hud-val">${nodes}</span></div>
+    <div class="hud-stat">
+      <span class="hud-label">TRUST</span>
+      <span class="hud-val hud-trust">
+        <span class="hud-trust-bar">${trustBar}</span>
+        <span>${trust}%</span>
+      </span>
+    </div>
     <div class="hud-stat"><span class="hud-label">ENGINE</span> <span class="hud-val hud-ok">DOM Lite</span></div>
   </div>
 `;

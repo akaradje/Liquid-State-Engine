@@ -15,6 +15,7 @@
 
 use crate::ecs::World;
 use crate::quadtree::Quadtree;
+use crate::{EVENT_MERGE, EVENT_FRACTURE};
 
 /// Color mapping from bitmask bits to RGBA values.
 /// This defines the "rainbow spectrum" of fundamental elements.
@@ -50,7 +51,8 @@ impl RelationSystem {
 
     /// Process collisions and execute merge logic.
     /// Called once per frame after quadtree is built.
-    pub fn process(&mut self, world: &mut World, quadtree: &Quadtree) {
+    /// Events are pushed into the provided queue for JS consumption.
+    pub fn process(&mut self, world: &mut World, quadtree: &Quadtree, events: &mut Vec<u32>) {
         self.merge_queue.clear();
 
         // Detect collisions via quadtree
@@ -108,12 +110,12 @@ impl RelationSystem {
             if !world.alive[a] || !world.alive[b] {
                 continue; // May have been consumed by earlier merge
             }
-            self.merge(world, a, b);
+            self.merge(world, a, b, events);
         }
     }
 
     /// Merge two entities: combine bitmasks with OR, create new entity, remove originals.
-    fn merge(&self, world: &mut World, a: usize, b: usize) {
+    fn merge(&self, world: &mut World, a: usize, b: usize, events: &mut Vec<u32>) {
         let new_mask = world.bitmask[a] | world.bitmask[b];
 
         // New position: center of mass
@@ -132,17 +134,29 @@ impl RelationSystem {
         let area = std::f32::consts::PI * (world.radius[a].powi(2) + world.radius[b].powi(2));
         let new_radius = (area / std::f32::consts::PI).sqrt();
 
+        let id_a = a as u32;
+        let id_b = b as u32;
+
         // Remove originals
         world.despawn(a);
         world.despawn(b);
 
         // Spawn merged entity
-        world.spawn(new_x, new_y, new_vx, new_vy, r, g, b_color, 230, new_mask, new_radius);
+        let new_id = world.spawn(new_x, new_y, new_vx, new_vy, r, g, b_color, 230, new_mask, new_radius);
+        let new_id_u32 = new_id as u32;
+
+        // Record merge event: [kind=0, consumed=2, produced=1, idA, idB, newId]
+        events.push(EVENT_MERGE);
+        events.push(2);
+        events.push(1);
+        events.push(id_a);
+        events.push(id_b);
+        events.push(new_id_u32);
     }
 
     /// Fracture an entity into its individual bit components.
     /// Each set bit becomes a new separate node.
-    pub fn fracture(&self, world: &mut World, id: usize) {
+    pub fn fracture(&self, world: &mut World, id: usize, events: &mut Vec<u32>) {
         if !world.alive[id] || id >= world.max_entities {
             return;
         }
@@ -156,6 +170,7 @@ impl RelationSystem {
         let cx = world.pos_x[id];
         let cy = world.pos_y[id];
         let original_radius = world.radius[id];
+        let original_id = id as u32;
 
         // Calculate child radius (area-preserving split)
         let child_radius = original_radius / (bit_count as f32).sqrt();
@@ -168,6 +183,13 @@ impl RelationSystem {
         let eject_speed = 80.0; // Ejection velocity
         let mut angle = 0.0f32;
 
+        // Record fracture event header (we'll fill produced IDs as we go)
+        let event_start = events.len();
+        events.push(EVENT_FRACTURE);
+        events.push(1);           // consumed_count
+        events.push(0);           // produced_count (placeholder)
+        events.push(original_id); // consumed[0]
+
         for bit in 0..32u32 {
             if mask & (1 << bit) != 0 {
                 let child_mask = 1u32 << bit;
@@ -178,7 +200,7 @@ impl RelationSystem {
                 let vx = angle.cos() * eject_speed;
                 let vy = angle.sin() * eject_speed;
 
-                world.spawn(
+                let child_id = world.spawn(
                     cx + offset_x,
                     cy + offset_y,
                     vx, vy,
@@ -187,9 +209,14 @@ impl RelationSystem {
                     child_radius,
                 );
 
+                events.push(child_id as u32);
                 angle += angle_step;
             }
         }
+
+        // Backpatch produced_count
+        let produced = (events.len() - event_start - 4) as u32;
+        events[event_start + 2] = produced; // produced_count = children spawned
     }
 
     /// Derive a display color from a bitmask by blending component colors.
@@ -231,5 +258,107 @@ impl RelationSystem {
             (g_sum / count).min(255) as u8,
             (b_sum / count).min(255) as u8,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_from_single_bit() {
+        let (r, g, b) = RelationSystem::color_from_bitmask(0b001);
+        assert_eq!((r, g, b), (255, 60, 60)); // Red
+
+        let (r, g, b) = RelationSystem::color_from_bitmask(0b010);
+        assert_eq!((r, g, b), (60, 255, 60)); // Green
+
+        let (r, g, b) = RelationSystem::color_from_bitmask(0b100);
+        assert_eq!((r, g, b), (60, 100, 255)); // Blue
+    }
+
+    #[test]
+    fn color_from_zero_mask_is_gray() {
+        let (r, g, b) = RelationSystem::color_from_bitmask(0);
+        assert_eq!((r, g, b), (128, 128, 128));
+    }
+
+    #[test]
+    fn merge_produces_correct_bitmask() {
+        let mut world = World::new(10);
+        let mut events = Vec::new();
+        let sys = RelationSystem::new();
+
+        let a_id = world.spawn(0.0, 0.0, 0.0, 0.0, 255, 0, 0, 255, 0b001, 10.0);
+        let b_id = world.spawn(5.0, 0.0, 0.0, 0.0, 0, 255, 0, 255, 0b010, 10.0);
+        let count_before = world.active_count();
+
+        sys.merge(&mut world, a_id, b_id, &mut events);
+
+        // 2 consumed, 1 produced → net -1
+        assert_eq!(world.active_count(), count_before - 1);
+        assert!(events.len() >= 3); // At least header
+        assert_eq!(events[0], EVENT_MERGE);
+        assert_eq!(events[1], 2); // consumed count
+        assert_eq!(events[2], 1); // produced count
+
+        // Find the newly spawned node and check its bitmask
+        let mut found = false;
+        for i in 0..world.max_entities {
+            if world.alive[i] && world.bitmask[i] == 0b011 {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "Merged node with bitmask 0b011 should exist");
+    }
+
+    #[test]
+    fn fracture_produces_individual_bits() {
+        let mut world = World::new(10);
+        let mut events = Vec::new();
+        let sys = RelationSystem::new();
+
+        // Spawn a composite node with 3 bits set
+        let id = world.spawn(100.0, 100.0, 0.0, 0.0, 128, 128, 128, 255, 0b0111, 20.0);
+        let count_before = world.active_count();
+
+        sys.fracture(&mut world, id, &mut events);
+
+        // 1 consumed, 3 produced → net +2
+        assert_eq!(world.active_count(), count_before + 2);
+        assert!(events.len() > 4);
+        assert_eq!(events[0], EVENT_FRACTURE);
+        assert_eq!(events[1], 1); // consumed count = 1
+        assert_eq!(events[2], 3); // produced count = 3
+
+        // Three children exist, each with exactly 1 bit set
+        let mut child_masks = Vec::new();
+        for i in 0..world.max_entities {
+            if world.alive[i] {
+                child_masks.push(world.bitmask[i]);
+            }
+        }
+        assert_eq!(child_masks.len(), 3);
+        for mask in &child_masks {
+            assert_eq!(mask.count_ones(), 1, "Each child should have exactly 1 bit");
+        }
+        // Combined OR of children should equal original mask
+        let combined: u32 = child_masks.iter().fold(0, |acc, m| acc | m);
+        assert_eq!(combined, 0b0111);
+    }
+
+    #[test]
+    fn fracture_single_bit_does_nothing() {
+        let mut world = World::new(10);
+        let mut events = Vec::new();
+        let sys = RelationSystem::new();
+
+        let id = world.spawn(0.0, 0.0, 0.0, 0.0, 255, 0, 0, 255, 0b0100, 8.0);
+        let count_before = world.active_count();
+        sys.fracture(&mut world, id, &mut events);
+        // Nothing should happen — 1 bit cannot fracture
+        assert_eq!(world.active_count(), count_before);
+        assert!(world.alive[id]);
     }
 }

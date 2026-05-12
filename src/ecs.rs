@@ -149,3 +149,55 @@ impl World {
         self.max_entities
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spawn_despawn_round_trip() {
+        let mut world = World::new(100);
+        assert_eq!(world.active_count(), 0);
+
+        let id = world.spawn(10.0, 20.0, 1.0, -2.0, 255, 128, 64, 200, 0b101, 8.0);
+        assert!(id != usize::MAX);
+        assert_eq!(world.active_count(), 1);
+        assert!(world.alive[id]);
+        assert_eq!(world.pos_x[id], 10.0);
+        assert_eq!(world.pos_y[id], 20.0);
+        assert_eq!(world.bitmask[id], 0b101);
+        assert_eq!(world.mass[id], 2.0); // popcount of 0b101 = 2
+
+        world.despawn(id);
+        assert_eq!(world.active_count(), 0);
+        assert!(!world.alive[id]);
+
+        // Re-spawn in the freed slot
+        let id2 = world.spawn(0.0, 0.0, 0.0, 0.0, 0, 0, 0, 255, 0, 4.0);
+        assert_eq!(id2, id); // Should reuse the freed slot
+        assert_eq!(world.active_count(), 1);
+    }
+
+    #[test]
+    fn spawn_at_capacity_returns_max() {
+        let mut world = World::new(5);
+        for _ in 0..5 {
+            let id = world.spawn(0.0, 0.0, 0.0, 0.0, 0, 0, 0, 255, 0, 1.0);
+            assert!(id != usize::MAX);
+        }
+        let overflow = world.spawn(0.0, 0.0, 0.0, 0.0, 0, 0, 0, 255, 0, 1.0);
+        assert_eq!(overflow, usize::MAX);
+    }
+
+    #[test]
+    fn force_accumulation_and_mass() {
+        let mut world = World::new(10);
+        let id = world.spawn(0.0, 0.0, 0.0, 0.0, 0, 0, 0, 255, 0b1111, 5.0);
+        assert_eq!(world.mass[id], 4.0);
+
+        world.apply_force(id, 10.0, 20.0);
+        world.apply_force(id, 5.0, -5.0);
+        assert_eq!(world.force_x[id], 15.0);
+        assert_eq!(world.force_y[id], 15.0);
+    }
+}

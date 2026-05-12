@@ -1,362 +1,368 @@
 /**
- * Liquid-State Engine - JavaScript Host Layer
- * 
- * This module handles:
- * 1. Canvas setup and fullscreen management
- * 2. Loading the WebAssembly module
- * 3. Reading the pixel buffer from Wasm memory and painting to Canvas
- * 4. Input event capture (mouse/touch) and forwarding to Wasm
- * 5. The main render loop (requestAnimationFrame)
- * 6. SharedArrayBuffer setup for future Web Worker integration
+ * Liquid-State Engine — Ultra-Lite DOM Architecture
+ *
+ * Pure HTML/JS/CSS. No Wasm, no canvas, no WebGL.
+ *
+ * Interactions:
+ *   Double-click workspace → create a new node
+ *   Click "+ New Node" button → create a new node
+ *   Drag data boxes anywhere on screen
+ *   Drag one box onto another → AI merge (combine keywords)
+ *   Double-click a data box → AI fracture (DeepSeek decomposition)
  */
 
 // ============================================================
-// Configuration
+// Workspace
 // ============================================================
-const MAX_NODES = 10000;
-const SPAWN_BATCH = 50;       // Nodes to spawn on click
-const INITIAL_NODES = 200;    // Starting node count
+const workspace = document.getElementById('workspace');
+const createBtn = document.getElementById('create-btn');
+
+let nodeIdCounter = 0;
+/** @type {Map<number, HTMLElement>} */
+const nodes = new Map();
 
 // ============================================================
-// Canvas Setup
+// Node Creation
 // ============================================================
-const canvas = document.getElementById('liquid-canvas');
-const ctx = canvas.getContext('2d', { 
-    willReadFrequently: true,
-    alpha: false 
-});
 
-function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+function createNode(text, x, y) {
+  const id = ++nodeIdCounter;
+  const label = (text || '').trim();
+
+  const el = document.createElement('div');
+  el.className = 'data-box';
+  el.textContent = label || '…';
+  el.dataset.id = String(id);
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+
+  workspace.appendChild(el);
+  nodes.set(id, el);
+
+  if (label) {
+    triggerEnrich(id, label);
+  }
+
+  return id;
 }
-resizeCanvas();
-window.addEventListener('resize', resizeCanvas);
 
 // ============================================================
-// HUD Elements
+// Input Dialog
 // ============================================================
-const hudFps = document.getElementById('fps');
-const hudNodes = document.getElementById('nodes');
-const hudDirty = document.getElementById('dirty');
-const hudStatus = document.getElementById('status');
+
+function showInputDialog(x, y) {
+  const overlay = document.createElement('div');
+  overlay.className = 'input-overlay';
+
+  const dialog = document.createElement('div');
+  dialog.className = 'input-dialog';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'Enter a keyword (e.g., Rainbow, Car, Blockchain)...';
+  input.autofocus = true;
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+
+  const okBtn = document.createElement('button');
+  okBtn.className = 'primary';
+  okBtn.textContent = 'Create';
+
+  const close = () => overlay.remove();
+
+  cancelBtn.onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+  okBtn.onclick = () => {
+    const text = input.value.trim();
+    close();
+    if (text) createNode(text, x, y);
+  };
+
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') okBtn.click();
+    if (e.key === 'Escape') close();
+  };
+
+  actions.append(cancelBtn, okBtn);
+  dialog.append(input, actions);
+  overlay.append(dialog);
+  document.body.append(overlay);
+
+  requestAnimationFrame(() => input.focus());
+}
 
 // ============================================================
-// Engine State
+// AI Enrichment (fracture prep)
 // ============================================================
-let engine = null;       // Wasm LiquidEngine instance
-let wasmMemory = null;   // Wasm linear memory
-let running = false;
-let lastTime = 0;
-let frameCount = 0;
-let fpsTimer = 0;
-let currentFps = 0;
 
-// Interaction state
-let isDragging = false;
-let dragNodeId = null;
-let mouseX = 0;
-let mouseY = 0;
-let prevMouseX = 0;
-let prevMouseY = 0;
+async function triggerEnrich(id, keyword) {
+  const el = nodes.get(id);
+  if (!el) return;
+  el.classList.add('enriching');
+
+  try {
+    const { enrichPayload } = await import('./ai-enrich.js');
+    const enriched = await enrichPayload({ type: 'text', value: keyword, label: keyword }, id);
+    if (enriched.type === 'array' && Array.isArray(enriched.value) && enriched.value.length > 0) {
+      el.classList.add('enriched');
+      el.dataset.components = JSON.stringify(enriched.value);
+    }
+  } catch {
+    // enrichment failed — node stays as plain text
+  } finally {
+    el.classList.remove('enriching');
+  }
+}
 
 // ============================================================
-// Wasm Loading
+// AI Merge (drag A onto B → combine into one result)
 // ============================================================
-async function initEngine() {
+
+async function mergeNodes(draggedId, targetId) {
+  const draggedEl = nodes.get(draggedId);
+  const targetEl = nodes.get(targetId);
+  if (!draggedEl || !targetEl) return;
+
+  const keywordA = draggedEl.textContent?.trim();
+  const keywordB = targetEl.textContent?.trim();
+  if (!keywordA || !keywordB) return;
+
+  // Midpoint for the result
+  const ax = parseFloat(draggedEl.style.left) || 0;
+  const ay = parseFloat(draggedEl.style.top) || 0;
+  const bx = parseFloat(targetEl.style.left) || 0;
+  const by = parseFloat(targetEl.style.top) || 0;
+  const cx = (ax + bx) / 2;
+  const cy = (ay + by) / 2;
+
+  // Immediately mark both boxes as merging with visual feedback
+  draggedEl.classList.remove('merge-target');
+  targetEl.classList.remove('merge-target');
+  draggedEl.classList.add('merging');
+  targetEl.classList.add('merging');
+  // Show "Merging..." indicator
+  const origTextA = draggedEl.textContent;
+  const origTextB = targetEl.textContent;
+  draggedEl.textContent = '⚗️ Merging...';
+  targetEl.textContent = '⚗️ Merging...';
+
+  try {
+    const response = await fetch('/api/enrich', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'merge', keywords: [keywordA, keywordB] }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server error ${response.status}`);
+    }
+
+    const data = await response.json();
+    const result = data.result || 'Conceptual Anomaly';
+
+    // CRITICAL: remove BOTH old boxes from DOM before spawning the new one
+    draggedEl.remove();
+    targetEl.remove();
+    nodes.delete(draggedId);
+    nodes.delete(targetId);
+
+    // Spawn the new merged result at the exact collision midpoint
+    const mergedId = createNode(result, cx, cy);
+    const mergedEl = nodes.get(mergedId);
+    if (mergedEl) {
+      mergedEl.classList.add('merged-flash');
+      mergedEl.classList.add('enriched');
+      triggerEnrich(mergedId, result);
+    }
+  } catch (err) {
+    console.warn('[Merge] Failed:', err.message);
+    // Restore original state on failure
+    draggedEl.classList.remove('merging');
+    targetEl.classList.remove('merging');
+    draggedEl.textContent = origTextA;
+    targetEl.textContent = origTextB;
+  }
+}
+
+// ============================================================
+// AI Fracture (double-click → split into components)
+// ============================================================
+
+async function fractureNode(id) {
+  const el = nodes.get(id);
+  if (!el) return;
+
+  const keyword = el.textContent?.trim();
+  if (!keyword) return;
+
+  const cx = parseFloat(el.style.left) || 0;
+  const cy = parseFloat(el.style.top) || 0;
+
+  let components;
+
+  if (el.dataset.components) {
+    try { components = JSON.parse(el.dataset.components); } catch { /* fall through */ }
+  }
+
+  if (!components || components.length < 2) {
+    el.classList.add('enriching');
     try {
-        hudStatus.textContent = 'loading wasm...';
-        
-        // Import the wasm-bindgen generated module
-        const wasm = await import('../pkg/liquid_state_engine.js');
-        await wasm.default();  // Initialize wasm
-
-        hudStatus.textContent = 'initializing...';
-        
-        // Create engine instance
-        engine = new wasm.LiquidEngine(canvas.width, canvas.height, MAX_NODES);
-        wasmMemory = wasm.__wasm.memory;
-
-        // Spawn initial nodes
-        spawnInitialNodes();
-
-        hudStatus.textContent = 'ACTIVE';
-        running = true;
-        lastTime = performance.now();
-        requestAnimationFrame(gameLoop);
-
-    } catch (err) {
-        hudStatus.textContent = `ERROR: ${err.message}`;
-        console.error('Engine init failed:', err);
-        
-        // Fallback: run in demo mode without Wasm
-        console.log('Running in DEMO mode (no Wasm)');
-        hudStatus.textContent = 'DEMO MODE (no Wasm)';
-        runDemoMode();
+      const { enrichPayload } = await import('./ai-enrich.js');
+      const enriched = await enrichPayload({ type: 'text', value: keyword, label: keyword }, id);
+      if (enriched.type === 'array' && Array.isArray(enriched.value) && enriched.value.length > 1) {
+        components = enriched.value.map(String);
+      }
+    } catch {
+      el.classList.remove('enriching');
+      return;
     }
+  }
+
+  el.classList.remove('enriching');
+  if (!components || components.length < 2) return;
+
+  el.remove();
+  nodes.delete(id);
+
+  const count = components.length;
+  const spread = 40 + count * 12;
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count;
+    const x = cx + Math.cos(angle) * spread;
+    const y = cy + Math.sin(angle) * spread;
+    const childId = createNode(components[i], x, y);
+    const childEl = nodes.get(childId);
+    if (childEl) {
+      childEl.classList.add('child');
+      childEl.classList.add('enriched');
+      childEl.dataset.components = JSON.stringify([components[i]]);
+    }
+  }
 }
 
 // ============================================================
-// Node Spawning
+// Drag System (with collision detection for merge)
 // ============================================================
-function spawnInitialNodes() {
-    const w = canvas.width;
-    const h = canvas.height;
 
-    for (let i = 0; i < INITIAL_NODES; i++) {
-        const x = Math.random() * w;
-        const y = Math.random() * h;
-        const vx = (Math.random() - 0.5) * 60;
-        const vy = (Math.random() - 0.5) * 60;
-        const bitmask = 1 << Math.floor(Math.random() * 7);
-        const radius = 4 + Math.random() * 8;
-        
-        // Color derived from bitmask (matches Rust logic)
-        const colors = getColorFromBitmask(bitmask);
-        engine.spawn_node(x, y, vx, vy, colors[0], colors[1], colors[2], 255, bitmask, radius);
-    }
+let dragTarget = null;
+let dragStartX = 0;
+let dragStartY = 0;
+let nodeStartX = 0;
+let nodeStartY = 0;
+let mergeTarget = null; // currently highlighted merge target
+
+/** Check if two boxes overlap (at least 40% of either box intersects). */
+function boxesOverlap(a, b) {
+  const ra = a.getBoundingClientRect();
+  const rb = b.getBoundingClientRect();
+
+  const overlapX = Math.max(0, Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left));
+  const overlapY = Math.max(0, Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top));
+  const overlapArea = overlapX * overlapY;
+
+  const areaA = ra.width * ra.height;
+  const areaB = rb.width * rb.height;
+  const minArea = Math.min(areaA, areaB);
+
+  return overlapArea > minArea * 0.35;
 }
 
-function spawnNodesAtPosition(px, py, count) {
-    for (let i = 0; i < count; i++) {
-        const angle = (Math.PI * 2 * i) / count;
-        const spread = 20 + Math.random() * 30;
-        const x = px + Math.cos(angle) * spread;
-        const y = py + Math.sin(angle) * spread;
-        const vx = Math.cos(angle) * (40 + Math.random() * 60);
-        const vy = Math.sin(angle) * (40 + Math.random() * 60);
-        const bitmask = 1 << Math.floor(Math.random() * 7);
-        const radius = 4 + Math.random() * 8;
-        const colors = getColorFromBitmask(bitmask);
-        engine.spawn_node(x, y, vx, vy, colors[0], colors[1], colors[2], 255, bitmask, radius);
-    }
+/** Find another data-box that overlaps with the dragged element. */
+function findMergeTarget(dragged) {
+  for (const [id, el] of nodes) {
+    if (el === dragged) continue;
+    if (boxesOverlap(dragged, el)) return { id, el };
+  }
+  return null;
 }
 
-// ============================================================
-// Color Utility (mirrors Rust BIT_COLORS)
-// ============================================================
-const BIT_COLORS = [
-    [255, 60, 60],    // Bit 0: Red
-    [60, 255, 60],    // Bit 1: Green
-    [60, 100, 255],   // Bit 2: Blue
-    [255, 255, 60],   // Bit 3: Yellow
-    [255, 60, 255],   // Bit 4: Magenta
-    [60, 255, 255],   // Bit 5: Cyan
-    [255, 160, 60],   // Bit 6: Orange
-    [200, 130, 255],  // Bit 7: Purple
-];
-
-function getColorFromBitmask(mask) {
-    let r = 0, g = 0, b = 0, count = 0;
-    for (let bit = 0; bit < 8; bit++) {
-        if (mask & (1 << bit)) {
-            r += BIT_COLORS[bit][0];
-            g += BIT_COLORS[bit][1];
-            b += BIT_COLORS[bit][2];
-            count++;
-        }
-    }
-    if (count === 0) return [128, 128, 128];
-    return [Math.floor(r / count), Math.floor(g / count), Math.floor(b / count)];
-}
-
-// ============================================================
-// Main Game Loop
-// ============================================================
-function gameLoop(timestamp) {
-    if (!running) return;
-
-    const dt = Math.min((timestamp - lastTime) / 1000, 0.033); // Cap at ~30fps min
-    lastTime = timestamp;
-
-    // Update FPS counter
-    frameCount++;
-    fpsTimer += dt;
-    if (fpsTimer >= 1.0) {
-        currentFps = frameCount;
-        frameCount = 0;
-        fpsTimer = 0;
-        hudFps.textContent = currentFps;
-        hudNodes.textContent = engine.node_count();
-    }
-
-    // Apply drag force if active
-    if (isDragging && dragNodeId !== null && dragNodeId !== 0xFFFFFFFF) {
-        const dx = mouseX - prevMouseX;
-        const dy = mouseY - prevMouseY;
-        engine.apply_force(dragNodeId, dx * 15, dy * 15);
-    }
-    prevMouseX = mouseX;
-    prevMouseY = mouseY;
-
-    // Tick the engine (physics + collision + render)
-    engine.tick(dt);
-
-    // Read pixel buffer from Wasm memory and draw to canvas
-    if (engine.has_dirty_region()) {
-        drawPixelBuffer();
-        engine.clear_dirty();
-    }
-
-    requestAnimationFrame(gameLoop);
-}
-
-// ============================================================
-// Pixel Buffer -> Canvas Transfer
-// ============================================================
-function drawPixelBuffer() {
-    const ptr = engine.pixel_buffer_ptr();
-    const len = engine.pixel_buffer_len();
-    
-    // Read dirty rectangle
-    const dirtyPtr = engine.dirty_rect_ptr();
-    const dirtyView = new Uint32Array(wasmMemory.buffer, dirtyPtr, 4);
-    const [dx, dy, dw, dh] = dirtyView;
-
-    if (dw === 0 || dh === 0) return;
-
-    hudDirty.textContent = `${dw}x${dh}`;
-
-    // Create ImageData from the dirty region of the pixel buffer
-    // For efficiency, we only copy the dirty rectangle portion
-    const fullBuffer = new Uint8ClampedArray(wasmMemory.buffer, ptr, len);
-    const w = canvas.width;
-
-    // Create a sub-image for just the dirty region
-    const regionData = new ImageData(dw, dh);
-    for (let row = 0; row < dh; row++) {
-        const srcStart = ((dy + row) * w + dx) * 4;
-        const dstStart = row * dw * 4;
-        regionData.data.set(
-            fullBuffer.subarray(srcStart, srcStart + dw * 4),
-            dstStart
-        );
-    }
-
-    ctx.putImageData(regionData, dx, dy);
-}
-
-// ============================================================
-// Input Handling
-// ============================================================
-canvas.addEventListener('mousedown', (e) => {
-    mouseX = e.clientX;
-    mouseY = e.clientY;
-    prevMouseX = mouseX;
-    prevMouseY = mouseY;
-
-    if (!engine) return;
-
-    // Try to pick a node
-    dragNodeId = engine.pick_node_at(mouseX, mouseY);
-    
-    if (dragNodeId !== 0xFFFFFFFF) {
-        isDragging = true;
-    } else {
-        // Click on empty space: spawn new nodes
-        spawnNodesAtPosition(mouseX, mouseY, SPAWN_BATCH);
-    }
-});
-
-canvas.addEventListener('mousemove', (e) => {
-    mouseX = e.clientX;
-    mouseY = e.clientY;
-});
-
-canvas.addEventListener('mouseup', () => {
-    isDragging = false;
-    dragNodeId = null;
-});
-
-canvas.addEventListener('dblclick', (e) => {
-    if (!engine) return;
-    // Double-click: fracture the node under cursor
-    const id = engine.pick_node_at(e.clientX, e.clientY);
-    if (id !== 0xFFFFFFFF) {
-        engine.fracture_node(id);
-    }
-});
-
-// Touch support
-canvas.addEventListener('touchstart', (e) => {
+workspace.addEventListener('mousedown', (e) => {
+  const box = e.target.closest('.data-box');
+  if (box) {
+    dragTarget = box;
+    dragTarget.classList.add('dragging');
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    nodeStartX = parseFloat(box.style.left) || 0;
+    nodeStartY = parseFloat(box.style.top) || 0;
     e.preventDefault();
-    const touch = e.touches[0];
-    mouseX = touch.clientX;
-    mouseY = touch.clientY;
-    prevMouseX = mouseX;
-    prevMouseY = mouseY;
+  }
+});
 
-    if (!engine) return;
+window.addEventListener('mousemove', (e) => {
+  if (!dragTarget) return;
 
-    dragNodeId = engine.pick_node_at(mouseX, mouseY);
-    if (dragNodeId !== 0xFFFFFFFF) {
-        isDragging = true;
-    } else {
-        spawnNodesAtPosition(mouseX, mouseY, SPAWN_BATCH);
+  const dx = e.clientX - dragStartX;
+  const dy = e.clientY - dragStartY;
+  dragTarget.style.left = (nodeStartX + dx) + 'px';
+  dragTarget.style.top = (nodeStartY + dy) + 'px';
+
+  // Collision detection: highlight merge target
+  const target = findMergeTarget(dragTarget);
+  if (target && target.el !== mergeTarget?.el) {
+    // New merge target found
+    if (mergeTarget) mergeTarget.el.classList.remove('merge-target');
+    mergeTarget = target;
+    mergeTarget.el.classList.add('merge-target');
+  } else if (!target && mergeTarget) {
+    // No longer overlapping
+    mergeTarget.el.classList.remove('merge-target');
+    mergeTarget = null;
+  }
+});
+
+window.addEventListener('mouseup', () => {
+  if (dragTarget) {
+    dragTarget.classList.remove('dragging');
+
+    // Check for merge on drop
+    if (mergeTarget) {
+      mergeTarget.el.classList.remove('merge-target');
+      const draggedId = Number(dragTarget.dataset.id);
+      const targetId = Number(mergeTarget.el.dataset.id);
+      mergeNodes(draggedId, targetId);
+      mergeTarget = null;
     }
-}, { passive: false });
 
-canvas.addEventListener('touchmove', (e) => {
-    e.preventDefault();
-    const touch = e.touches[0];
-    mouseX = touch.clientX;
-    mouseY = touch.clientY;
-}, { passive: false });
-
-canvas.addEventListener('touchend', () => {
-    isDragging = false;
-    dragNodeId = null;
+    dragTarget = null;
+  }
 });
 
 // ============================================================
-// Demo Mode (runs without Wasm for preview/testing)
+// Double-Click: Create (on empty) or Fracture (on node)
 // ============================================================
-function runDemoMode() {
-    // Pure JS fallback that demonstrates the visual concept
-    const nodes = [];
-    const w = canvas.width;
-    const h = canvas.height;
 
-    for (let i = 0; i < INITIAL_NODES; i++) {
-        const bitmask = 1 << Math.floor(Math.random() * 7);
-        const colors = getColorFromBitmask(bitmask);
-        nodes.push({
-            x: Math.random() * w,
-            y: Math.random() * h,
-            vx: (Math.random() - 0.5) * 60,
-            vy: (Math.random() - 0.5) * 60,
-            r: 4 + Math.random() * 8,
-            color: `rgb(${colors[0]}, ${colors[1]}, ${colors[2]})`,
-        });
-    }
-
-    function demoLoop() {
-        ctx.fillStyle = 'rgba(10, 10, 20, 0.15)';
-        ctx.fillRect(0, 0, w, h);
-
-        for (const n of nodes) {
-            n.vx *= 0.98;
-            n.vy *= 0.98;
-            n.x += n.vx * 0.016;
-            n.y += n.vy * 0.016;
-
-            if (n.x < n.r || n.x > w - n.r) n.vx *= -0.7;
-            if (n.y < n.r || n.y > h - n.r) n.vy *= -0.7;
-            n.x = Math.max(n.r, Math.min(w - n.r, n.x));
-            n.y = Math.max(n.r, Math.min(h - n.r, n.y));
-
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-            ctx.fillStyle = n.color;
-            ctx.fill();
-        }
-
-        requestAnimationFrame(demoLoop);
-    }
-    requestAnimationFrame(demoLoop);
-}
+workspace.addEventListener('dblclick', (e) => {
+  const box = e.target.closest('.data-box');
+  if (box) {
+    const id = Number(box.dataset.id);
+    fractureNode(id);
+  } else if (e.target === workspace) {
+    showInputDialog(e.clientX, e.clientY);
+  }
+});
 
 // ============================================================
-// Bootstrap
+// Create Button
 // ============================================================
-initEngine();
+
+createBtn.addEventListener('click', () => {
+  showInputDialog(window.innerWidth / 2, window.innerHeight / 2);
+});
+
+// ============================================================
+// Global API
+// ============================================================
+
+window.lse = {
+  createNode,
+  fractureNode,
+  mergeNodes,
+  getNodes() { return nodes; },
+  getNodeCount() { return nodes.size; },
+};

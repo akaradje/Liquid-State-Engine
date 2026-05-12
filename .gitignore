@@ -2,6 +2,7 @@
 /target/
 /pkg/
 /node_modules/
+/web/pkg/
 
 # IDE
 .vscode/
@@ -12,6 +13,11 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# Secrets — NEVER commit API keys
+.env
+.env.local
+.env.*.local
 
 # Wasm intermediate
 *.wasm.map

@@ -1,0 +1,220 @@
+/**
+ * Liquid-State Engine — Ultra-Lite DOM Architecture
+ * Glassmorphism styles for data boxes and workspace.
+ */
+
+/* ---- Workspace ---- */
+#workspace {
+  position: fixed;
+  inset: 0;
+  background: #0a0a14;
+  overflow: hidden;
+  cursor: crosshair;
+  z-index: 1;
+}
+
+/* ---- Data Box ---- */
+.data-box {
+  position: absolute;
+  padding: 10px 18px;
+  background: rgba(18, 22, 36, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(100, 180, 255, 0.22);
+  border-radius: 10px;
+  color: rgba(200, 225, 255, 0.9);
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: grab;
+  user-select: none;
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(100, 180, 255, 0.06) inset;
+  transition: box-shadow 0.15s, border-color 0.15s;
+  z-index: 100;
+  transform: translate(-50%, -50%);
+}
+.data-box:hover {
+  border-color: rgba(130, 200, 255, 0.4);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(60, 140, 255, 0.12),
+    0 0 0 1px rgba(100, 180, 255, 0.1) inset;
+}
+.data-box:active,
+.data-box.dragging {
+  cursor: grabbing;
+  border-color: rgba(100, 200, 255, 0.55);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.55),
+    0 0 16px rgba(60, 140, 255, 0.18),
+    0 0 0 1px rgba(100, 180, 255, 0.14) inset;
+}
+
+/* Enriched node indicator */
+.data-box.enriched {
+  border-color: rgba(100, 220, 160, 0.3);
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.45),
+    0 0 10px rgba(80, 200, 140, 0.1),
+    0 0 0 1px rgba(100, 200, 150, 0.06) inset;
+}
+.data-box.enriched::after {
+  content: '✦';
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  font-size: 10px;
+  color: rgba(120, 255, 180, 0.8);
+}
+
+/* Child node (fractured) indicator */
+.data-box.child {
+  border-color: rgba(180, 140, 255, 0.25);
+  animation: spawnIn 0.35s ease-out;
+}
+@keyframes spawnIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* Loading/enriching state */
+.data-box.enriching {
+  opacity: 0.7;
+  border-style: dashed;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { border-color: rgba(100, 180, 255, 0.22); }
+  50%      { border-color: rgba(140, 200, 255, 0.55); }
+}
+
+/* ---- Merge Target (gold glow during drag) ---- */
+.data-box.merge-target {
+  border-color: rgba(255, 200, 80, 0.55) !important;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.5),
+    0 0 18px rgba(255, 180, 40, 0.25),
+    0 0 0 1px rgba(255, 200, 80, 0.15) inset !important;
+  animation: mergePulse 0.6s ease-in-out infinite;
+}
+@keyframes mergePulse {
+  0%, 100% { box-shadow: 0 4px 24px rgba(0,0,0,0.5), 0 0 18px rgba(255,180,40,0.25), 0 0 0 1px rgba(255,200,80,0.15) inset; }
+  50%      { box-shadow: 0 4px 28px rgba(0,0,0,0.55), 0 0 28px rgba(255,200,60,0.4), 0 0 0 2px rgba(255,220,100,0.25) inset; }
+}
+
+/* ---- Merging state (boxes fading out during API call) ---- */
+.data-box.merging {
+  opacity: 0.4;
+  pointer-events: none;
+  border-color: rgba(255, 200, 80, 0.4);
+  animation: mergingShrink 0.8s ease-in-out infinite;
+}
+@keyframes mergingShrink {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); }
+  50%      { transform: translate(-50%, -50%) scale(0.92); opacity: 0.25; }
+}
+
+/* ---- Merged Result (impactful birth: 0 → 1.2 → 1.0) ---- */
+.data-box.merged-flash {
+  border-color: rgba(255, 200, 80, 0.5);
+  animation: mergedBirth 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+@keyframes mergedBirth {
+  0%   { transform: translate(-50%, -50%) scale(0); opacity: 0;
+         box-shadow: 0 0 60px rgba(255, 200, 60, 0.7), 0 0 0 4px rgba(255, 200, 80, 0.5) inset; }
+  60%  { transform: translate(-50%, -50%) scale(1.2); opacity: 1;
+         box-shadow: 0 0 30px rgba(255, 200, 60, 0.3), 0 0 0 2px rgba(255, 200, 80, 0.3) inset; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 1;
+         box-shadow: 0 4px 20px rgba(0,0,0,0.45), 0 0 0 1px rgba(100,180,255,0.06) inset; }
+}
+
+/* ---- Create Button (floating) ---- */
+#create-btn {
+  position: fixed;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  padding: 8px 20px;
+  background: rgba(18, 22, 36, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(100, 180, 255, 0.25);
+  border-radius: 8px;
+  color: rgba(180, 220, 255, 0.85);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  pointer-events: auto;
+}
+#create-btn:hover {
+  background: rgba(30, 50, 80, 0.8);
+  border-color: rgba(120, 200, 255, 0.4);
+  box-shadow: 0 0 16px rgba(60, 140, 255, 0.15);
+}
+
+/* ---- Input Dialog Overlay ---- */
+.input-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+.input-dialog {
+  background: rgba(15, 22, 40, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(100, 180, 255, 0.25);
+  border-radius: 12px;
+  padding: 20px 24px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+.input-dialog input {
+  background: rgba(20, 30, 55, 0.7);
+  border: 1px solid rgba(100, 180, 255, 0.2);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: rgba(200, 225, 255, 0.9);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.input-dialog input:focus {
+  border-color: rgba(80, 160, 255, 0.5);
+}
+.input-dialog .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.input-dialog button {
+  background: rgba(30, 50, 80, 0.6);
+  border: 1px solid rgba(100, 180, 255, 0.18);
+  color: rgba(180, 220, 255, 0.8);
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+}
+.input-dialog button.primary {
+  background: rgba(60, 140, 255, 0.25);
+  border-color: rgba(100, 180, 255, 0.4);
+  color: #fff;
+}
+.input-dialog button:hover {
+  background: rgba(60, 120, 255, 0.2);
+}

@@ -237,3 +237,60 @@ impl Quadtree {
         self.query(x, y, search_radius)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_and_query_single_point() {
+        let mut qt = Quadtree::new(0.0, 0.0, 800.0, 600.0, 8, 4);
+        qt.insert(42, 100.0, 200.0);
+
+        let found = qt.query(100.0, 200.0, 10.0);
+        assert!(found.contains(&42));
+
+        let empty = qt.query(500.0, 500.0, 10.0);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn query_returns_multiple_points_in_area() {
+        let mut qt = Quadtree::new(0.0, 0.0, 400.0, 400.0, 8, 4);
+        qt.insert(1, 50.0, 50.0);
+        qt.insert(2, 60.0, 55.0);
+        qt.insert(3, 20.0, 20.0);
+        qt.insert(4, 300.0, 300.0);
+
+        // Query near (55, 52) should find id 1 and 2
+        let found = qt.query(55.0, 52.0, 20.0);
+        assert!(found.contains(&1));
+        assert!(found.contains(&2));
+        assert!(!found.contains(&3));
+        assert!(!found.contains(&4));
+    }
+
+    #[test]
+    fn clear_resets_all() {
+        let mut qt = Quadtree::new(0.0, 0.0, 400.0, 400.0, 8, 4);
+        qt.insert(1, 100.0, 100.0);
+        assert!(!qt.query(100.0, 100.0, 5.0).is_empty());
+
+        qt.clear();
+        assert!(qt.query(100.0, 100.0, 5.0).is_empty());
+    }
+
+    #[test]
+    fn many_points_subdivide() {
+        let mut qt = Quadtree::new(0.0, 0.0, 1000.0, 1000.0, 8, 4);
+        // Insert many points to force subdivision
+        for i in 0..100u32 {
+            let x = (i * 7) as f32 % 1000.0;
+            let y = (i * 13) as f32 % 1000.0;
+            qt.insert(i, x, y);
+        }
+        // Query should still work after subdivision
+        let found = qt.query_rect(0.0, 0.0, 1000.0, 1000.0);
+        assert_eq!(found.len(), 100);
+    }
+}

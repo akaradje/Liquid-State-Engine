@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LSE — Data Workflow Demo</title>
+    <link rel="stylesheet" href="../web/hud/style.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: 'SF Mono', monospace; }
+        #liquid-canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+        #hud { position: fixed; top: 0; left: 0; pointer-events: none; opacity: 0; }
+        #hud-app { position: fixed; inset: 0; pointer-events: none; z-index: 1000; }
+        .demo-overlay {
+            position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+            pointer-events: auto; background: rgba(10,15,28,0.75); backdrop-filter: blur(12px);
+            border: 1px solid rgba(100,180,255,0.18); border-radius: 10px; padding: 10px 14px;
+            color: rgba(180,220,255,0.8); font-size: 10px; line-height: 1.6;
+            display: flex; gap: 10px; z-index: 900;
+        }
+        .demo-overlay button {
+            background: rgba(30,50,80,0.6); border: 1px solid rgba(100,180,255,0.2); color: rgba(180,220,255,0.7);
+            border-radius: 6px; padding: 4px 10px; cursor: pointer; font-family: inherit; font-size: 10px;
+        }
+        .demo-overlay button:hover { background: rgba(60,120,255,0.2); color: #fff; }
+    </style>
+</head>
+<body>
+    <canvas id="liquid-canvas"></canvas>
+    <div id="hud">
+        <div><span id="fps">0</span></div>
+        <div><span id="nodes">0</span></div>
+        <div><span id="dirty">0x0</span></div>
+        <div><span id="status">loading...</span></div>
+    </div>
+    <div id="hud-app"></div>
+
+    <div class="demo-overlay" id="demo-bar">
+        <button onclick="demoJson()">JSON Dataset</button>
+        <button onclick="demoNumbers()">Numbers</button>
+        <button onclick="demoText()">Text</button>
+        <button onclick="demoClear()">Clear All</button>
+    </div>
+
+    <script type="module">
+        import '../web/main.js';
+        import '../web/hud/app.js';
+    </script>
+
+    <script>
+        function spawnBatch(entries) {
+            const w = innerWidth, h = innerHeight;
+            for (const e of entries) {
+                const x = w * 0.2 + Math.random() * w * 0.6;
+                const y = h * 0.2 + Math.random() * h * 0.6;
+                const vx = (Math.random() - 0.5) * 40;
+                const vy = (Math.random() - 0.5) * 40;
+                const bitmask = 1 << Math.floor(Math.random() * 7);
+                const cmask = bitmask;
+                const colors = [255,60,60, 60,255,60, 60,100,255, 255,255,60, 255,60,255, 60,255,255, 255,160,60, 200,130,255];
+                const bit = Math.floor(Math.log2(bitmask));
+                const r = colors[bit*3], g = colors[bit*3+1], b = colors[bit*3+2];
+                if (window.lse) {
+                    window.lse.spawnNode(x, y, e.payload);
+                }
+            }
+        }
+
+        function demoClear() {
+            // Reload to clear
+            location.reload();
+        }
+
+        window.demoJson = () => {
+            const data = [
+                { type: 'json', value: { name: 'Alice', role: 'Engineer', team: 'Core' }, label: 'Alice' },
+                { type: 'json', value: { name: 'Bob', role: 'Designer', team: 'Core' }, label: 'Bob' },
+                { type: 'json', value: { name: 'Charlie', role: 'PM', team: 'Growth' }, label: 'Charlie' },
+                { type: 'json', value: { name: 'Dana', role: 'Engineer', team: 'Growth' }, label: 'Dana' },
+                { type: 'json', value: { name: 'Eve', role: 'Engineer', team: 'Mobile' }, label: 'Eve' },
+            ];
+            spawnBatch(data.map(d => ({ payload: d })));
+        };
+
+        window.demoNumbers = () => {
+            const data = [100, 250, 75, 400, 50, 300, 175, 500, 80, 200];
+            spawnBatch(data.map(n => ({ payload: { type: 'number', value: n, label: String(n) } })));
+        };
+
+        window.demoText = () => {
+            const words = ['lorem', 'ipsum', 'dolor', 'sit', 'amet', 'consectetur', 'adipiscing', 'elit', 'sed', 'do'];
+            spawnBatch(words.map(w => ({ payload: { type: 'text', value: w, label: w } })));
+        };
+    </script>
+</body>
+</html>

@@ -37,6 +37,25 @@ const PKG = path.resolve(__dirname, '..', 'web', 'pkg');
 const DEEPSEEK_BASE = 'https://api.deepseek.com/v1';
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 
+// ---- Safe JSON Parse Utility ----
+
+function safeJsonParse(text, fallback = null) {
+  let cleaned = text.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+  cleaned = cleaned.replace(/^﻿/, '').replace(/[​-‍﻿]/g, '');
+  try { return JSON.parse(cleaned); } catch(e) {}
+  const objMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (objMatch) try { return JSON.parse(objMatch[0]); } catch(e) {}
+  const arrMatch = cleaned.match(/\[[\s\S]*\]/);
+  if (arrMatch) try { return JSON.parse(arrMatch[0]); } catch(e) {}
+  const openBraces = (cleaned.match(/\{/g) || []).length;
+  const closeBraces = (cleaned.match(/\}/g) || []).length;
+  if (openBraces > closeBraces) {
+    const fixed = cleaned + '}'.repeat(openBraces - closeBraces);
+    try { return JSON.parse(fixed); } catch(e) {}
+  }
+  return fallback;
+}
+
 // ---- Model Routing (env-overridable) ----
 
 const MODEL_LITE     = process.env.MODEL_LITE     || 'deepseek-chat';
@@ -417,12 +436,12 @@ function analyzeDomain(keyword, callback) {
     messages: [
       {
         role: 'system',
-        content: 'You are a domain classifier. Analyze the user\'s keyword and return ONLY a valid JSON object with three fields: "domain" (one of: science, technology, philosophy, art, nature, social, general), "depth" (integer 2-5 indicating how many abstraction layers this concept has), "reasoning" (one short sentence explaining your classification). No markdown, no code fences — just the raw JSON object.',
+        content: 'You are a domain classifier. Analyze the user\'s keyword and return ONLY a valid JSON object with three fields: "domain" (one of: science, technology, philosophy, art, nature, social, general), "depth" (integer 2-5), "reasoning" (one short sentence explaining your classification). IMPORTANT: Respond ONLY in English. All JSON values must be ASCII/English strings. Do NOT use the user\'s language in your response. Always respond in English JSON. No markdown, no code fences — just the raw JSON object.',
       },
       { role: 'user', content: keyword },
     ],
     temperature: 0.1,
-    max_tokens: 80,
+    max_tokens: 150,
     stream: false,
   });
 
@@ -451,9 +470,21 @@ function analyzeDomain(keyword, callback) {
       try {
         const parsed = JSON.parse(data);
         let rawText = parsed?.choices?.[0]?.message?.content?.trim() ?? '{}';
-        rawText = rawText.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
 
-        const analysis = JSON.parse(rawText);
+        const analysis = safeJsonParse(rawText);
+        if (!analysis) {
+          // Regex fallback for partial JSON
+          const domainMatch = rawText.match(/"domain"\s*:\s*"([^"]+)"/);
+          const depthMatch = rawText.match(/"depth"\s*:\s*(\d+)/);
+          const reasoningMatch = rawText.match(/"reasoning"\s*:\s*"([^"]+)"/);
+          callback({
+            domain: domainMatch?.[1] || 'general',
+            depth: Math.max(2, Math.min(5, parseInt(depthMatch?.[1]) || 3)),
+            reasoning: (reasoningMatch?.[1] || 'parse fallback').slice(0, 200),
+          });
+          return;
+        }
+
         const validDomains = ['science', 'technology', 'philosophy', 'art', 'nature', 'social', 'general'];
         callback({
           domain: validDomains.includes(analysis.domain) ? analysis.domain : 'general',
@@ -1369,17 +1400,18 @@ Rate your response on:
 
 Then state: should you regenerate? (yes/no) and why.
 
-Return ONLY valid JSON:
-{"scores":{"accuracy":N,"creativity":N,"depth":N,"relevance":N},"shouldRegenerate":bool,"critique":"...","suggestedImprovement":"..."}`;
+CRITICAL: Respond ONLY in English. Keep critique under 50 words. Keep suggestedImprovement under 30 words.
+Return ONLY valid JSON, no markdown:
+{"scores":{"accuracy":N,"creativity":N,"depth":N,"relevance":N},"shouldRegenerate":bool,"critique":"brief english text","suggestedImprovement":"brief english text"}`;
 
   const requestBody = JSON.stringify({
     model: MODEL_STANDARD,
     messages: [
-      { role: 'system', content: 'You are a rigorous self-critic. Return ONLY valid JSON. No markdown.' },
+      { role: 'system', content: 'You are a rigorous self-critic. CRITICAL: Respond ONLY in English. Return ONLY valid JSON, no markdown. Keep all text fields brief (under 50 words).' },
       { role: 'user', content: critiquePrompt },
     ],
     temperature: 0.2,
-    max_tokens: 200,
+    max_tokens: 300,
     stream: false,
   });
 
@@ -1402,47 +1434,34 @@ Return ONLY valid JSON:
       try {
         const parsed = JSON.parse(data);
         const rawText = parsed?.choices?.[0]?.message?.content?.trim() ?? '{}';
-        const cleaned = rawText.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
-        const critique = JSON.parse(cleaned);
+        const critique = safeJsonParse(rawText);
+
+        if (!critique) {
+          // Regex fallback for partial JSON
+          const regenMatch = rawText.match(/shouldRegenerate["\s:]+(\w+)/);
+          const shouldRegen = regenMatch?.[1] === 'true';
+          const scores = {
+            accuracy: parseInt(rawText.match(/accuracy["\s:]+(\d+)/)?.[1]) || 7,
+            creativity: parseInt(rawText.match(/creativity["\s:]+(\d+)/)?.[1]) || 7,
+            depth: parseInt(rawText.match(/depth["\s:]+(\d+)/)?.[1]) || 7,
+            relevance: parseInt(rawText.match(/relevance["\s:]+(\d+)/)?.[1]) || 7,
+          };
+          const avgScore = (scores.accuracy + scores.creativity + scores.depth + scores.relevance) / 4;
+          if (shouldRegen && avgScore < 7) {
+            // Try regeneration with critique
+            doRegenerate(originalPrompt, firstResponse, 'Be more precise and creative.', scores, avgScore, callback);
+          } else {
+            callback({ improved: firstResponse, critique: 'parse fallback', scores, attempts: 1, finalScore: avgScore });
+          }
+          return;
+        }
 
         const scores = critique.scores || {};
         const avgScore = (scores.accuracy + scores.creativity + scores.depth + scores.relevance) / 4 || 0;
 
         if (critique.shouldRegenerate && avgScore < 7 && DEEPSEEK_API_KEY) {
-          console.log(`[Reflect] Score ${avgScore.toFixed(1)} — regenerating: ${critique.critique?.slice(0, 80)}`);
-
-          // Regenerate with critique context
-          const regenBody = JSON.stringify({
-            model: MODEL_STANDARD,
-            messages: [
-              { role: 'system', content: originalPrompt },
-              { role: 'user', content: `Improve your previous response. Critique: ${critique.suggestedImprovement || critique.critique || 'Be more precise and creative.'}` },
-            ],
-            temperature: 0.35,
-            max_tokens: 512,
-            stream: false,
-          });
-
-          const regenReq = https.request(options, (regenRes) => {
-            let regenData = '';
-            regenRes.on('data', chunk => { regenData += chunk; });
-            regenRes.on('end', () => {
-              try {
-                const regenParsed = JSON.parse(regenData);
-                const improved = regenParsed?.choices?.[0]?.message?.content?.trim() ?? firstResponse;
-                callback({
-                  improved,
-                  critique: critique.critique || '',
-                  scores,
-                  attempts: 2,
-                  finalScore: avgScore,
-                });
-              } catch { callback(null); }
-            });
-          });
-          regenReq.on('error', () => callback(null));
-          regenReq.write(regenBody);
-          regenReq.end();
+          console.log(`[Reflect] Score ${avgScore.toFixed(1)} — regenerating: ${(critique.critique || '').slice(0, 80)}`);
+          doRegenerate(originalPrompt, firstResponse, critique.suggestedImprovement || critique.critique || 'Be more precise and creative.', scores, avgScore, callback);
         } else {
           console.log(`[Reflect] Score ${avgScore.toFixed(1)} — keeping original`);
           callback({
@@ -1463,6 +1482,37 @@ Return ONLY valid JSON:
   apiReq.on('error', () => callback(null));
   apiReq.write(requestBody);
   apiReq.end();
+}
+
+/** Shared regeneration helper for reflectAndImprove. */
+function doRegenerate(originalPrompt, firstResponse, critiqueText, scores, avgScore, callback) {
+  const opts = {
+    hostname: 'api.deepseek.com', port: 443, path: '/v1/chat/completions',
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Accept': 'application/json' },
+  };
+  const regenBody = JSON.stringify({
+    model: MODEL_STANDARD,
+    messages: [
+      { role: 'system', content: originalPrompt },
+      { role: 'user', content: `Improve your previous response. Critique: ${critiqueText}` },
+    ],
+    temperature: 0.35, max_tokens: 512, stream: false,
+  });
+  const regenReq = https.request(opts, (regenRes) => {
+    let regenData = '';
+    regenRes.on('data', chunk => { regenData += chunk; });
+    regenRes.on('end', () => {
+      try {
+        const p = JSON.parse(regenData);
+        const improved = p?.choices?.[0]?.message?.content?.trim() ?? firstResponse;
+        callback({ improved, critique: critiqueText, scores, attempts: 2, finalScore: avgScore });
+      } catch { callback({ improved: firstResponse, critique: critiqueText, scores, attempts: 2, finalScore: avgScore }); }
+    });
+  });
+  regenReq.on('error', () => callback({ improved: firstResponse, critique: critiqueText, scores, attempts: 2, finalScore: avgScore }));
+  regenReq.write(regenBody);
+  regenReq.end();
 }
 
 // ---- Multi-Agent Debate System ----

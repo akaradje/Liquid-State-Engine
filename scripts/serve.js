@@ -225,8 +225,8 @@ function handleEnrich(req, res) {
       // Bug 2 fix: handle non-English input gracefully
       domainPrompt += ' The user may input non-English text. Always respond with English component names in a JSON array regardless of input language.';
 
-      // 6-Level LOD Framework — strict one-level-at-a-time decomposition
-      domainPrompt += ' You are an ontological cartographer. Break down using ONE LEVEL OF DETAIL at a time. THE 6 LODs: L1=Category/Field (e.g.,Anatomy,Transportation), L2=System/Entity (e.g.,Human Skeleton,Car), L3=Macro-Parts/Sub-systems (e.g.,Axial Skeleton,Engine), L4=Micro-Components (e.g.,Skull,Piston), L5=Materials/Tissues (e.g.,Bone Tissue,Steel), L6=Chemical/Atomic (e.g.,Calcium,Carbon). RULES: 1. Assess LOD of input concept. 2. Output 4-7 components at EXACTLY LOD+1. 3. NEVER skip levels. If given L2 (Skeleton), output L3 parts, NOT L5 materials. 4. If concept is L6 or indivisible, return ["ATOMIC: [reason]"].';
+      // Natural Ontology — true structural decomposition, no forced counts
+      domainPrompt += ' You are an expert Concept Analyzer. Break down the concept into its TRUE, natural subsystems or structural parts, moving DOWN EXACTLY ONE level of detail. NATURAL ONTOLOGY RULE: DO NOT force a specific number of components. Quality and structural accuracy are paramount. If a system naturally has exactly 2 main parts, return EXACTLY 2. If it has many, return the most critical 3 to 8 components for cognitive clarity. Example (System): "Human Skeleton" → ["Axial Skeleton","Appendicular Skeleton"]. Example (Part): "Joint" → ["Synovial Fluid","Cartilage","Ligaments","Tendons"]. Example (Material): "Bone" → ["Spongy Bone","Compact Bone","Bone Marrow"]. ATOMIC RULE: ONLY if the concept is a fundamental chemical, atom, or pure abstraction (e.g., "Calcium","Electron","Number 1"), return exactly: ["ATOMIC: Cannot be divided"]. OUTPUT RULE: Return ONLY a valid JSON array of strings. Do NOT wrap in markdown blockquotes or add explanations.';
 
       // Apply user profile preferences to the prompt
       const userProfile = parsed.userProfile;
@@ -378,12 +378,13 @@ function handleEnrich(req, res) {
  * Parse the AI response text into an array of component strings.
  */
 function parseComponents(text, keyword) {
-  let cleaned = text.trim();
+  let cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();
 
-  // Aggressively strip ALL markdown code fences (anywhere in the response)
-  cleaned = cleaned.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
-  // Also strip leading/trailing backticks that aren't full fences
-  cleaned = cleaned.replace(/^`+|`+$/g, '').trim();
+  // Force-extract the array if it's wrapped in markdown or prose
+  if (!cleaned.startsWith('[')) {
+    const match = cleaned.match(/\[.*\]/s);
+    if (match) cleaned = match[0];
+  }
 
   // Try JSON parse
   try {

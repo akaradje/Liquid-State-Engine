@@ -54,7 +54,7 @@ function getSVG() {
   if (!svg) {
     svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.id = 'tension-svg';
-    svg.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:55;pointer-events:auto;';
+    svg.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:55;pointer-events:none;';
     document.body.appendChild(svg);
   }
   return svg;
@@ -98,6 +98,7 @@ function renderLines(nodesMap) {
     path.setAttribute('stroke-width', String(1 + t.intensity * 2));
     path.setAttribute('stroke-dasharray', t.type === 'paradox' ? '8,4' : t.type === 'dialectic' ? '4,2' : 'none');
     path.style.cursor = 'pointer';
+    path.style.pointerEvents = 'stroke';
 
     // Tooltip on hover
     const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');

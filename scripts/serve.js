@@ -132,7 +132,7 @@ function serveFile(res, filePath) {
       'Content-Length': stat.size,
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
       'Access-Control-Allow-Origin': '*',
     });
     res.end(data);

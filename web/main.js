@@ -333,11 +333,13 @@ async function triggerEnrich(id, keyword) {
   if (!el) return;
   el.classList.add('enriching');
 
+  // Safety timeout: ensure node becomes interactive even if API hangs
+  const safetyTimeout = setTimeout(() => { el.classList.remove('enriching'); }, 15000);
+
   try {
     const { enrichPayload } = await import('./ai-enrich.js');
     const enriched = await enrichPayload({ type: 'text', value: keyword, label: keyword }, id);
 
-    // Also call /api/enrich directly to get memory-augmented context
     const contextStr = memory.getEnrichContext(keyword);
     if (contextStr) {
       try {
@@ -363,7 +365,6 @@ async function triggerEnrich(id, keyword) {
         el.title = (el.title || '') + '\n📚 Grounded in external knowledge';
       }
     }
-    // Default confidence for non-merged (fracture/enrich) nodes
     if (!el.dataset.confidence) {
       el.dataset.confidence = '0.7';
       el.style.setProperty('--conf-width', '70%');
@@ -371,6 +372,7 @@ async function triggerEnrich(id, keyword) {
   } catch {
     // enrichment failed — node stays as plain text
   } finally {
+    clearTimeout(safetyTimeout);
     el.classList.remove('enriching');
   }
 }

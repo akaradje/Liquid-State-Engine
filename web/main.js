@@ -1837,6 +1837,7 @@ function addRatingButtons(el) {
 
 let tooltipEl = null;
 let tooltipTimer = null;
+const descCache = new Map();
 
 function showTooltip(el, e) {
   hideTooltip();
@@ -1850,6 +1851,7 @@ function showTooltip(el, e) {
     tooltipEl = document.createElement('div');
     tooltipEl.className = 'node-tooltip';
     tooltipEl.innerHTML = `
+      <div class="tt-desc">loading…</div>
       <div><span class="tt-label">Keyword</span> <span class="tt-val">${eschtml(label)}</span></div>
       <div><span class="tt-label">Components</span> <span class="tt-val">${hasComponents}</span></div>
       <div><span class="tt-label">Confidence</span> <span class="tt-val">${conf}</span></div>
@@ -1858,7 +1860,40 @@ function showTooltip(el, e) {
     tooltipEl.style.left = (e.clientX + 16) + 'px';
     tooltipEl.style.top = (e.clientY - 10) + 'px';
     document.body.appendChild(tooltipEl);
+
+    // Async fetch AI description
+    loadDescription(label, tooltipEl);
   }, 500);
+}
+
+async function loadDescription(label, tipEl) {
+  if (!label || label === '…') return;
+  const descEl = tipEl.querySelector('.tt-desc');
+  if (!descEl) return;
+
+  // Check client cache first
+  if (descCache.has(label)) {
+    descEl.textContent = descCache.get(label);
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/describe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyword: label }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const desc = data.description || label;
+      descCache.set(label, desc);
+      if (descEl.parentNode) descEl.textContent = desc;
+    } else {
+      if (descEl.parentNode) descEl.textContent = '—';
+    }
+  } catch {
+    if (descEl.parentNode) descEl.textContent = '—';
+  }
 }
 
 function hideTooltip() {

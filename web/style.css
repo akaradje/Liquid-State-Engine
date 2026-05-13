@@ -353,7 +353,8 @@
   font-size: 11px;
   line-height: 1.5;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-  white-space: nowrap;
+  white-space: normal;
+  max-width: 260px;
   animation: tooltipIn 0.15s ease-out;
 }
 @keyframes tooltipIn {
@@ -362,6 +363,19 @@
 }
 .node-tooltip .tt-label { color: rgba(140, 200, 255, 0.55); }
 .node-tooltip .tt-val  { color: rgba(200, 225, 255, 0.9); }
+
+.node-tooltip .tt-desc {
+  color: rgba(200, 225, 255, 0.95);
+  font-size: 11px;
+  line-height: 1.4;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(100, 180, 255, 0.15);
+  font-style: italic;
+  max-width: 220px;
+  white-space: normal;
+  word-wrap: break-word;
+}
 
 /* ---- Context Menu ---- */
 .context-menu {

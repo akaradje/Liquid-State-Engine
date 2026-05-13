@@ -1830,6 +1830,67 @@ async function maybeGroundWithWikipedia(keyword) {
   return null;
 }
 
+// ---- Concept Description (tooltip definitions) ----
+
+const descCache = new Map();
+
+function handleDescribe(req, res) {
+  if (req.method !== 'POST') { res.writeHead(405); res.end(JSON.stringify({ error: 'Method not allowed' })); return; }
+  if (!DEEPSEEK_API_KEY) { res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ description: 'AI description unavailable' })); return; }
+
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', () => {
+    let parsed;
+    try { parsed = JSON.parse(body); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    const keyword = (parsed.keyword || '').trim();
+    if (!keyword) { res.writeHead(400); res.end(JSON.stringify({ error: 'keyword required' })); return; }
+
+    // Check cache
+    const cacheKey = keyword.toLowerCase();
+    if (descCache.has(cacheKey)) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ description: descCache.get(cacheKey) }));
+      return;
+    }
+
+    const reqBody = JSON.stringify({
+      model: MODEL_LITE,
+      messages: [
+        { role: 'system', content: 'You are a concise encyclopedia. Given a concept, provide a 1-sentence definition (max 15 words). Respond in the SAME language as the input. If the input is Thai, respond in Thai. If English, respond in English. Return ONLY the definition text, no quotes, no markdown.' },
+        { role: 'user', content: keyword },
+      ],
+      temperature: 0.3, max_tokens: 60, stream: false,
+    });
+
+    const opts = { hostname: 'api.deepseek.com', port: 443, path: '/v1/chat/completions', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Accept': 'application/json' } };
+
+    const apiReq = https.request(opts, (apiRes) => {
+      let d = '';
+      apiRes.on('data', c => { d += c; });
+      apiRes.on('end', () => {
+        let description = '';
+        if (apiRes.statusCode === 200) {
+          try {
+            const p = JSON.parse(d);
+            description = (p?.choices?.[0]?.message?.content?.trim() || '').replace(/^["']|["']$/g, '');
+          } catch {}
+        }
+        if (!description) description = keyword;
+        descCache.set(cacheKey, description);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ description }));
+      });
+    });
+    apiReq.on('error', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ description: keyword }));
+    });
+    apiReq.write(reqBody); apiReq.end();
+  });
+}
+
 // ---- HTTP Server ----
 
 const server = http.createServer((req, res) => {
@@ -1847,6 +1908,10 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
   // API routes
+  if (url.pathname === '/api/describe') {
+    handleDescribe(req, res);
+    return;
+  }
   if (url.pathname === '/api/agent') {
     handleAgent(req, res);
     return;

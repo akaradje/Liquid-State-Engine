@@ -225,6 +225,9 @@ function handleEnrich(req, res) {
       domainPrompt += ' The user may input non-English text. Always respond with English component names in a JSON array regardless of input language.';
 
       // Atomic Rule: prevent hallucination on indivisible concepts
+      // Macro-First Rule: prioritize structural/anatomical/functional levels
+      domainPrompt += ' MACRO-FIRST RULE: Prioritize macroscopic, structural, anatomical, or functional breakdowns. Example (Anatomy): "Human Skeleton" MUST return ["Axial Skeleton","Appendicular Skeleton","Bone Types (Long, Short, Flat)"] — NOT collagen or calcium. Example (Technology): "Computer" MUST return ["CPU","Motherboard","RAM","Storage"] — NOT silicon. NEVER jump to microscopic, chemical, or atomic levels unless the input is already microscopic (e.g., "DNA","Atom").';
+
       domainPrompt += ' ATOMIC RULE: If the concept is logically, mathematically, or physically indivisible (e.g., "The Number 1", "Quark", "Nothingness", "Point"), DO NOT hallucinate random sub-components. Instead return exactly one component starting with "ATOMIC: " followed by a brief definition of why it cannot be divided. Example: ["ATOMIC: The fundamental mathematical unit"].';
 
       // Apply user profile preferences to the prompt
@@ -412,7 +415,7 @@ function parseComponents(text, keyword) {
 // ---- Domain Analysis (Step 1 of 2-step fracture reasoning) ----
 
 const DOMAIN_PROMPTS = {
-  science:    'Break this scientific concept into its fundamental physical, chemical, or mathematical components. Use precise scientific terminology.',
+  science:    'Break this scientific concept into its structural, functional, or systemic components. Use the highest-level classification that still provides meaningful detail. Use precise scientific terminology.',
   technology: 'Decompose this technology into its engineering subsystems, protocols, and architectural layers.',
   philosophy: 'Analyze this philosophical concept into its core epistemological premises, axioms, and logical arguments.',
   art:        'Break this artistic concept into its aesthetic elements, techniques, compositional principles, and cultural influences.',

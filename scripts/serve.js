@@ -278,7 +278,7 @@ function handleEnrich(req, res) {
         temperature,
         max_tokens: maxTokens,
         stream: false,
-        response_format: { type: 'json_object' },
+        ...(tier !== 'LITE' ? { response_format: { type: 'json_object' } } : {}),
       });
 
       const options = {
@@ -311,18 +311,25 @@ function handleEnrich(req, res) {
             const parsed = JSON.parse(data);
             let rawText = parsed?.choices?.[0]?.message?.content?.trim() ?? '';
 
-            // Bug 2: retry once if AI returns empty (non-English input can cause this)
+            // Escalation: if LITE (flash) fails, retry with STANDARD (chat)
             if (!rawText && !parsed?.disableReflection) {
-              console.log(`[DeepSeek] Empty response for "${keyword}", retrying with temp 0.5...`);
-              const retryBody = JSON.stringify({ model, temperature: 0.5, max_tokens: maxTokens, stream: false, messages: [{ role: 'system', content: domainPrompt }, { role: 'user', content: userMessage }] });
-              const retryReq = https.request(options, (retryRes) => { let rd = ''; retryRes.on('data', c => { rd += c; }); retryRes.on('end', () => { try { rawText = JSON.parse(rd)?.choices?.[0]?.message?.content?.trim() || rawText; processResponse(rawText); } catch { processResponse(rawText); } }); });
-              retryReq.on('error', () => processResponse(rawText));
+              const escalateModel = tier === 'LITE' ? MODEL_STANDARD : model;
+              const escalated = tier === 'LITE';
+              console.log(`[DeepSeek] ${escalated ? 'Flash failed. Escalating to STANDARD' : 'Empty response, retrying'} for "${keyword}"...`);
+              const retryBody = JSON.stringify({
+                model: escalateModel,
+                temperature: 0.5, max_tokens: maxTokens, stream: false,
+                messages: [{ role: 'system', content: domainPrompt }, { role: 'user', content: userMessage }],
+                ...(escalated ? { response_format: { type: 'json_object' } } : {}),
+              });
+              const retryReq = https.request(options, (retryRes) => { let rd = ''; retryRes.on('data', c => { rd += c; }); retryRes.on('end', () => { try { rawText = JSON.parse(rd)?.choices?.[0]?.message?.content?.trim() || rawText; processResponse(rawText, escalated ? MODEL_STANDARD : model, escalated ? 'STANDARD' : tier); } catch { processResponse(rawText, model, tier); } }); });
+              retryReq.on('error', () => processResponse(rawText, model, tier));
               retryReq.write(retryBody); retryReq.end();
               return;
             }
 
-            processResponse(rawText);
-            function processResponse(rawText) {
+            processResponse(rawText, model, tier);
+            function processResponse(rawText, finalModel, finalTier) {
             // Self-critique reflection (unless disabled)
             const enableReflection = !parsed?.disableReflection;
             if (enableReflection && rawText) {
@@ -332,7 +339,8 @@ function handleEnrich(req, res) {
 
                 const responseBody = JSON.stringify({
                   components,
-                  model, tier, keyword, domain, depth, reasoning,
+                  model: finalModel, tier: finalTier, keyword, domain, depth, reasoning,
+                  escalated: finalModel !== model,
                   reflection: reflection ? {
                     attempts: reflection.attempts,
                     critique: reflection.critique,
@@ -343,13 +351,13 @@ function handleEnrich(req, res) {
 
                 res.writeHead(200, {
                   'Content-Type': 'application/json',
-                  'X-DeepSeek-Model': model, 'X-DeepSeek-Tier': tier,
+                  'X-DeepSeek-Model': finalModel, 'X-DeepSeek-Tier': finalTier,
                   'Access-Control-Allow-Origin': '*',
                   'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier',
                 });
-                knowledgeCache.set(cacheKey, { components, model, timestamp: Date.now() });
+                knowledgeCache.set(cacheKey, { components, model: finalModel, timestamp: Date.now() });
                 res.end(responseBody);
-                console.log(`[DeepSeek] "${keyword}" → ${components.length} components (reflected) via ${model}`);
+                console.log(`[DeepSeek] "${keyword}" → ${components.length} components (reflected) via ${finalModel}`);
               });
               return;
             }
@@ -357,14 +365,15 @@ function handleEnrich(req, res) {
             // No reflection: respond immediately
             const components = parseComponents(rawText, keyword);
             const responseBody = JSON.stringify({
-              components, model, tier, keyword, domain, depth, reasoning,
+              components, model: finalModel, tier: finalTier, keyword, domain, depth, reasoning,
+              escalated: finalModel !== model,
               grounded: !!groundedSource,
               groundedSource: groundedSource?.slice(0, 200) || null,
             });
-            knowledgeCache.set(cacheKey, { components, model, timestamp: Date.now() });
-            res.writeHead(200, { 'Content-Type': 'application/json', 'X-DeepSeek-Model': model, 'X-DeepSeek-Tier': tier, 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier' });
+            knowledgeCache.set(cacheKey, { components, model: finalModel, timestamp: Date.now() });
+            res.writeHead(200, { 'Content-Type': 'application/json', 'X-DeepSeek-Model': finalModel, 'X-DeepSeek-Tier': finalTier, 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier' });
             res.end(responseBody);
-            console.log(`[DeepSeek] "${keyword}" → ${components.length} components via ${model}`);
+            console.log(`[DeepSeek] "${keyword}" → ${components.length} components via ${finalModel}`);
             } // close processResponse
 
           } catch (err) {

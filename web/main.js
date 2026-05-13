@@ -43,6 +43,14 @@ let nodeIdCounter = 0;
 /** @type {Map<number, HTMLElement>} */
 const nodes = new Map();
 
+// Interaction state
+let mouseX = 0;
+let mouseY = 0;
+let prevMouseX = 0;
+let prevMouseY = 0;
+let isDragging = false;
+let dragNodeId = null;
+
 // ============================================================
 // Optional Wasm Physics Layer
 // ============================================================
@@ -743,6 +751,8 @@ workspace.addEventListener('mousedown', (e) => {
   if (box) {
     dragTarget = box;
     dragTarget.classList.add('dragging');
+    isDragging = true;
+    dragNodeId = Number(box.dataset.id);
     highlightSimilarNodes(Number(box.dataset.id));
     dragStartX = e.clientX;
     dragStartY = e.clientY;
@@ -807,6 +817,8 @@ window.addEventListener('mouseup', () => {
     }
 
     dragTarget = null;
+    isDragging = false;
+    dragNodeId = null;
   }
 });
 
@@ -837,6 +849,8 @@ function handleDragStart(pos, target) {
   if (box) {
     dragTarget = box;
     dragTarget.classList.add('dragging');
+    isDragging = true;
+    dragNodeId = Number(box.dataset.id);
     dragStartX = pos.x;
     dragStartY = pos.y;
     nodeStartX = parseFloat(box.style.left) || 0;
@@ -886,6 +900,8 @@ function handleDragEnd() {
       mergeTarget = null;
     }
     dragTarget = null;
+    isDragging = false;
+    dragNodeId = null;
   }
 }
 

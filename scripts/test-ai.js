@@ -222,8 +222,8 @@ async function main() {
     task: 'What is the chemical formula for water?',
   }, (res) => {
     if (!res.answer || typeof res.answer !== 'string') return 'answer is missing';
-    const hasWater = res.answer.toLowerCase().includes('h2o') || res.answer.toLowerCase().includes('water');
-    if (!hasWater) return `answer doesn\'t mention water/H2O: "${res.answer.slice(0, 80)}"`;
+    const hasWater = /h[₂2]o|water/i.test(res.answer);
+    if (!hasWater) return 'answer doesn\'t mention water/H2O: ' + JSON.stringify(res.answer.slice(0, 80));
     return true;
   });
 

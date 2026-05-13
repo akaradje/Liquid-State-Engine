@@ -784,6 +784,7 @@ window.addEventListener('mousemove', (e) => {
 
     const dx = e.clientX - dragStartX;
     const dy = e.clientY - dragStartY;
+    console.log('[Drag] mousemove dx:', dx, 'dy:', dy, 'target style:', dragTarget.style.left, dragTarget.style.top);
     dragTarget.style.left = (nodeStartX + dx) + 'px';
     dragTarget.style.top = (nodeStartY + dy) + 'px';
 
@@ -813,6 +814,7 @@ window.addEventListener('mousemove', (e) => {
 
 window.addEventListener('mouseup', () => {
   try {
+    console.log('[Drag] mouseup, dragTarget:', dragTarget?.dataset?.id, 'mergeTarget:', mergeTarget?.el?.dataset?.id);
     clearSimilarHighlights();
     if (dragTarget) {
       dragTarget.classList.remove('dragging');

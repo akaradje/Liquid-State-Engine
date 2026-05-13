@@ -604,3 +604,8 @@
   0%, 100% { transform: translate(0, -50%) translateY(0); }
   50%      { transform: translate(0, -50%) translateY(-8px); }
 }
+
+/* Force-fix: guarantee data-boxes always receive pointer events */
+.data-box {
+  pointer-events: auto !important;
+}

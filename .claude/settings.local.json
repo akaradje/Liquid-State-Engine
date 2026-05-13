@@ -38,7 +38,17 @@
       "Bash(node -e ' *)",
       "Bash(timeout 3 node scripts/serve.js)",
       "Bash(gh pr *)",
-      "Bash(node -e 'try { const m = import\\('\\\\''./__TRACKED_VAR__'\\\\''\\); console.log\\('\\\\''OK'\\\\''\\); } catch\\(e\\) { console.log\\('\\\\''FAIL:'\\\\'', e.message\\); }')"
+      "Bash(node -e 'try { const m = import\\('\\\\''./__TRACKED_VAR__'\\\\''\\); console.log\\('\\\\''OK'\\\\''\\); } catch\\(e\\) { console.log\\('\\\\''FAIL:'\\\\'', e.message\\); }')",
+      "Bash(node scripts/validate.js)",
+      "Bash(node -e \"const fs=require\\('fs'\\); const d=fs.readdirSync\\('web', {withFileTypes:true}\\); d.forEach\\(e => console.log\\(e.name, e.isDirectory\\(\\)?'dir':'file'\\)\\)\")",
+      "Bash(rm -f .git/hooks/pre-commit)",
+      "Bash(ln -sf ../../scripts/validate.js .git/hooks/pre-commit)",
+      "Bash(cp scripts/validate.js .git/hooks/pre-commit)",
+      "Bash(.git/hooks/pre-commit)",
+      "Bash(node --check scripts/test-ai.js)",
+      "Bash(node scripts/test-ai.js)",
+      "Bash(node scripts/test-ai.js --quick)",
+      "Bash(node scripts/serve.js)"
     ]
   }
 }

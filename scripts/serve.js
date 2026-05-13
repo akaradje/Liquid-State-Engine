@@ -39,20 +39,23 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 
 // ---- Safe JSON Parse Utility ----
 
-function safeJsonParse(text, fallback = null) {
-  let cleaned = text.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
-  cleaned = cleaned.replace(/^﻿/, '').replace(/[​-‍﻿]/g, '');
-  try { return JSON.parse(cleaned); } catch(e) {}
-  const objMatch = cleaned.match(/\{[\s\S]*\}/);
+/** Safely parse AI JSON — strips non-ASCII, fixes truncation. */
+function safeParseAIJson(rawText, fallback = null) {
+  if (!rawText || !rawText.trim()) return fallback;
+  let text = rawText.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+  text = text.replace(/[^\x00-\x7F]/g, '');
+  text = text.replace(/:\s*""\s*([,}])/g, ':"stripped"$1');
+  try { return JSON.parse(text); } catch(e) {}
+  const objMatch = text.match(/\{[^{}]*\}/);
   if (objMatch) try { return JSON.parse(objMatch[0]); } catch(e) {}
-  const arrMatch = cleaned.match(/\[[\s\S]*\]/);
-  if (arrMatch) try { return JSON.parse(arrMatch[0]); } catch(e) {}
-  const openBraces = (cleaned.match(/\{/g) || []).length;
-  const closeBraces = (cleaned.match(/\}/g) || []).length;
-  if (openBraces > closeBraces) {
-    const fixed = cleaned + '}'.repeat(openBraces - closeBraces);
-    try { return JSON.parse(fixed); } catch(e) {}
-  }
+  let fixed = text;
+  fixed = fixed.replace(/,?\s*"[^"]*$/, '');
+  fixed = fixed.replace(/,?\s*"[^"]*"\s*:\s*"?[^"}]*$/, '');
+  const ob = (fixed.match(/\{/g) || []).length, cb = (fixed.match(/\}/g) || []).length;
+  const osb = (fixed.match(/\[/g) || []).length, csb = (fixed.match(/\]/g) || []).length;
+  fixed += ']'.repeat(Math.max(0, osb - csb));
+  fixed += '}'.repeat(Math.max(0, ob - cb));
+  try { return JSON.parse(fixed); } catch(e) {}
   return fallback;
 }
 
@@ -223,6 +226,9 @@ function handleEnrich(req, res) {
       // Step 2: Build domain-specific decomposition prompt
       // (domainPrompt already computed by applyGrounding)
 
+      // Bug 2 fix: handle non-English input gracefully
+      domainPrompt += ' The user may input non-English text. Always respond with English component names in a JSON array regardless of input language.';
+
       // Apply user profile preferences to the prompt
       const userProfile = parsed.userProfile;
       if (userProfile) {
@@ -291,11 +297,23 @@ function handleEnrich(req, res) {
 
           try {
             const parsed = JSON.parse(data);
-            const rawText = parsed?.choices?.[0]?.message?.content?.trim() ?? '';
+            let rawText = parsed?.choices?.[0]?.message?.content?.trim() ?? '';
 
+            // Bug 2: retry once if AI returns empty (non-English input can cause this)
+            if (!rawText && !parsed?.disableReflection) {
+              console.log(`[DeepSeek] Empty response for "${keyword}", retrying with temp 0.5...`);
+              const retryBody = JSON.stringify({ model, temperature: 0.5, max_tokens: maxTokens, stream: false, messages: [{ role: 'system', content: domainPrompt }, { role: 'user', content: userMessage }] });
+              const retryReq = https.request(options, (retryRes) => { let rd = ''; retryRes.on('data', c => { rd += c; }); retryRes.on('end', () => { try { rawText = JSON.parse(rd)?.choices?.[0]?.message?.content?.trim() || rawText; processResponse(rawText); } catch { processResponse(rawText); } }); });
+              retryReq.on('error', () => processResponse(rawText));
+              retryReq.write(retryBody); retryReq.end();
+              return;
+            }
+
+            processResponse(rawText);
+            function processResponse(rawText) {
             // Self-critique reflection (unless disabled)
             const enableReflection = !parsed?.disableReflection;
-            if (enableReflection) {
+            if (enableReflection && rawText) {
               reflectAndImprove(domainPrompt, rawText, context, (reflection) => {
                 const finalText = reflection?.improved || rawText;
                 const components = parseComponents(finalText, keyword);
@@ -330,35 +348,16 @@ function handleEnrich(req, res) {
               grounded: !!groundedSource,
               groundedSource: groundedSource?.slice(0, 200) || null,
             });
-
-            res.writeHead(200, {
-              'Content-Type': 'application/json',
-              'X-DeepSeek-Model': model, 'X-DeepSeek-Tier': tier,
-              'Access-Control-Allow-Origin': '*',
-              'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier',
-            });
+            res.writeHead(200, { 'Content-Type': 'application/json', 'X-DeepSeek-Model': model, 'X-DeepSeek-Tier': tier, 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier' });
             res.end(responseBody);
             console.log(`[DeepSeek] "${keyword}" → ${components.length} components via ${model}`);
+            } // close processResponse
+
           } catch (err) {
             console.error('[DeepSeek] Parse error:', err.message, 'raw:', data.slice(0, 200));
             const fallbackComponents = keyword.split(/[\s,;]+/).filter(Boolean);
-            res.writeHead(200, {
-              'Content-Type': 'application/json',
-              'X-DeepSeek-Model': model,
-              'X-DeepSeek-Tier': tier,
-              'Access-Control-Allow-Origin': '*',
-              'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier',
-            });
-            res.end(JSON.stringify({
-              components: fallbackComponents.length > 0 ? fallbackComponents : [keyword],
-              model,
-              tier,
-              keyword,
-              domain,
-              depth,
-              reasoning,
-              fallback: true,
-            }));
+            res.writeHead(200, { 'Content-Type': 'application/json', 'X-DeepSeek-Model': model, 'X-DeepSeek-Tier': tier, 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier' });
+            res.end(JSON.stringify({ components: fallbackComponents.length > 0 ? fallbackComponents : [keyword], model, tier, keyword, domain, depth, reasoning, fallback: true }));
           }
         });
       });
@@ -436,12 +435,12 @@ function analyzeDomain(keyword, callback) {
     messages: [
       {
         role: 'system',
-        content: 'You are a domain classifier. Analyze the user\'s keyword and return ONLY a valid JSON object with three fields: "domain" (one of: science, technology, philosophy, art, nature, social, general), "depth" (integer 2-5), "reasoning" (one short sentence explaining your classification). IMPORTANT: Respond ONLY in English. All JSON values must be ASCII/English strings. Do NOT use the user\'s language in your response. Always respond in English JSON. No markdown, no code fences — just the raw JSON object.',
+        content: 'Classify the domain of the given concept. You MUST respond in English only. Do NOT use Thai, Chinese, or any non-ASCII characters in your response. Return ONLY this exact JSON structure with short English values: {"domain":"science|technology|philosophy|art|nature|social|general","depth":N,"reasoning":"max 10 English words"}',
       },
       { role: 'user', content: keyword },
     ],
     temperature: 0.1,
-    max_tokens: 150,
+    max_tokens: 200,
     stream: false,
   });
 
@@ -471,7 +470,7 @@ function analyzeDomain(keyword, callback) {
         const parsed = JSON.parse(data);
         let rawText = parsed?.choices?.[0]?.message?.content?.trim() ?? '{}';
 
-        const analysis = safeJsonParse(rawText);
+        const analysis = safeParseAIJson(rawText);
         if (!analysis) {
           // Regex fallback for partial JSON
           const domainMatch = rawText.match(/"domain"\s*:\s*"([^"]+)"/);
@@ -1388,30 +1387,22 @@ function finishEmbeddings(embeddings, uncached, newEmbeddings, res) {
  * @param {function} callback - called with { improved, critique, scores, attempts }
  */
 function reflectAndImprove(originalPrompt, firstResponse, context, callback) {
-  const critiquePrompt = `You just generated this response: "${firstResponse.slice(0, 300)}"
+  const critiquePrompt = `Rate this response to "${originalPrompt.slice(0, 120)}":
+"${firstResponse.slice(0, 200)}"
 
-For the original task: "${originalPrompt.slice(0, 200)}"
+Return ONLY this short JSON (no markdown):
+{"score":N,"redo":true/false,"tip":"max 15 words english"}
 
-Rate your response on:
-- Accuracy (1-10)
-- Creativity (1-10)
-- Depth (1-10)
-- Relevance (1-10)
-
-Then state: should you regenerate? (yes/no) and why.
-
-CRITICAL: Respond ONLY in English. Keep critique under 50 words. Keep suggestedImprovement under 30 words.
-Return ONLY valid JSON, no markdown:
-{"scores":{"accuracy":N,"creativity":N,"depth":N,"relevance":N},"shouldRegenerate":bool,"critique":"brief english text","suggestedImprovement":"brief english text"}`;
+CRITICAL RULES: Respond in English ONLY. Keep ALL text values under 20 words. Your entire JSON response must be under 300 characters total.`;
 
   const requestBody = JSON.stringify({
     model: MODEL_STANDARD,
     messages: [
-      { role: 'system', content: 'You are a rigorous self-critic. CRITICAL: Respond ONLY in English. Return ONLY valid JSON, no markdown. Keep all text fields brief (under 50 words).' },
+      { role: 'system', content: 'You are a critic. Follow ALL rules in the prompt. CRITICAL: Respond ONLY in English. Keep response under 300 characters. Return ONLY valid JSON, no markdown.' },
       { role: 'user', content: critiquePrompt },
     ],
     temperature: 0.2,
-    max_tokens: 300,
+    max_tokens: 250,
     stream: false,
   });
 
@@ -1434,42 +1425,40 @@ Return ONLY valid JSON, no markdown:
       try {
         const parsed = JSON.parse(data);
         const rawText = parsed?.choices?.[0]?.message?.content?.trim() ?? '{}';
-        const critique = safeJsonParse(rawText);
+        const critique = safeParseAIJson(rawText);
 
         if (!critique) {
-          // Regex fallback for partial JSON
-          const regenMatch = rawText.match(/shouldRegenerate["\s:]+(\w+)/);
-          const shouldRegen = regenMatch?.[1] === 'true';
-          const scores = {
-            accuracy: parseInt(rawText.match(/accuracy["\s:]+(\d+)/)?.[1]) || 7,
-            creativity: parseInt(rawText.match(/creativity["\s:]+(\d+)/)?.[1]) || 7,
-            depth: parseInt(rawText.match(/depth["\s:]+(\d+)/)?.[1]) || 7,
-            relevance: parseInt(rawText.match(/relevance["\s:]+(\d+)/)?.[1]) || 7,
-          };
-          const avgScore = (scores.accuracy + scores.creativity + scores.depth + scores.relevance) / 4;
-          if (shouldRegen && avgScore < 7) {
-            // Try regeneration with critique
-            doRegenerate(originalPrompt, firstResponse, 'Be more precise and creative.', scores, avgScore, callback);
+          // Regex fallback for simplified partial JSON
+          const redoMatch = rawText.match(/redo["\s:]+(\w+)/);
+          const shouldRegen = redoMatch?.[1] === 'true';
+          const score = parseInt(rawText.match(/score["\s:]+(\d+)/)?.[1]) || 7;
+          const tipMatch = rawText.match(/tip["\s:]+"([^"]+)"/);
+          const tip = tipMatch?.[1] || 'improve quality';
+          const scores = { accuracy: score, creativity: score, depth: score, relevance: score };
+          if (shouldRegen && score < 7) {
+            doRegenerate(originalPrompt, firstResponse, tip, scores, score, callback);
           } else {
-            callback({ improved: firstResponse, critique: 'parse fallback', scores, attempts: 1, finalScore: avgScore });
+            callback({ improved: firstResponse, critique: tip, scores, attempts: 1, finalScore: score });
           }
           return;
         }
 
-        const scores = critique.scores || {};
-        const avgScore = (scores.accuracy + scores.creativity + scores.depth + scores.relevance) / 4 || 0;
+        const score = critique.score || 7;
+        const shouldRegen = critique.redo === true;
+        const tip = critique.tip || '';
+        const scores = { accuracy: score, creativity: score, depth: score, relevance: score };
 
-        if (critique.shouldRegenerate && avgScore < 7 && DEEPSEEK_API_KEY) {
-          console.log(`[Reflect] Score ${avgScore.toFixed(1)} — regenerating: ${(critique.critique || '').slice(0, 80)}`);
-          doRegenerate(originalPrompt, firstResponse, critique.suggestedImprovement || critique.critique || 'Be more precise and creative.', scores, avgScore, callback);
+        if (shouldRegen && score < 7 && DEEPSEEK_API_KEY) {
+          console.log(`[Reflect] Score ${score} — regenerating: ${tip.slice(0, 60)}`);
+          doRegenerate(originalPrompt, firstResponse, tip || 'Be more precise and creative.', scores, score, callback);
         } else {
-          console.log(`[Reflect] Score ${avgScore.toFixed(1)} — keeping original`);
+          console.log(`[Reflect] Score ${score} — keeping original`);
           callback({
             improved: firstResponse,
-            critique: critique.critique || '',
+            critique: tip,
             scores,
             attempts: 1,
-            finalScore: avgScore,
+            finalScore: score,
           });
         }
       } catch (err) {

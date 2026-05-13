@@ -1,3 +1,8 @@
+// Suppress SES/Lockdown interference from browser extensions (MetaMask, crypto wallets)
+if (typeof globalThis.__sesshin_lockdown !== 'undefined' || typeof globalThis.lockdown === 'function') {
+  console.warn('[LSE] Detected SES/Lockdown (likely crypto wallet extension). Some features may be affected.');
+}
+
 /**
  * Liquid-State Engine — Ultra-Lite DOM Architecture
  *
@@ -747,79 +752,83 @@ function findMergeTarget(dragged) {
 }
 
 workspace.addEventListener('mousedown', (e) => {
-  const box = e.target.closest('.data-box');
-  if (box) {
-    dragTarget = box;
-    dragTarget.classList.add('dragging');
-    isDragging = true;
-    dragNodeId = Number(box.dataset.id);
-    highlightSimilarNodes(Number(box.dataset.id));
-    dragStartX = e.clientX;
-    dragStartY = e.clientY;
-    nodeStartX = parseFloat(box.style.left) || 0;
-    nodeStartY = parseFloat(box.style.top) || 0;
-    e.preventDefault();
-  }
+  try {
+    console.log('[Drag] mousedown target:', e.target?.tagName, e.target?.className);
+    e.stopImmediatePropagation();
+    const box = e.target?.closest?.('.data-box');
+    if (box) {
+      dragTarget = box;
+      dragTarget.classList.add('dragging');
+      isDragging = true;
+      dragNodeId = Number(box.dataset.id);
+      highlightSimilarNodes(Number(box.dataset.id));
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      nodeStartX = parseFloat(box.style.left) || 0;
+      nodeStartY = parseFloat(box.style.top) || 0;
+      e.preventDefault();
+    }
+  } catch (err) { console.warn('[Drag] mousedown error:', err.message); }
 });
 
 window.addEventListener('mousemove', (e) => {
-  touchInput();
-  mouseX = e.clientX;
-  mouseY = e.clientY;
-  maybeBroadcastCursor();
+  try {
+    touchInput();
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    maybeBroadcastCursor();
 
-  if (!dragTarget) return;
+    if (!dragTarget) return;
 
-  const dx = e.clientX - dragStartX;
-  const dy = e.clientY - dragStartY;
-  dragTarget.style.left = (nodeStartX + dx) + 'px';
-  dragTarget.style.top = (nodeStartY + dy) + 'px';
+    const dx = e.clientX - dragStartX;
+    const dy = e.clientY - dragStartY;
+    dragTarget.style.left = (nodeStartX + dx) + 'px';
+    dragTarget.style.top = (nodeStartY + dy) + 'px';
 
-  // Collision detection: highlight merge target
-  const target = findMergeTarget(dragTarget);
-  // Draw energy beam between dragged node and merge target
-  if (target) {
-    const fromEl = dragTarget;
-    const toEl = target.el;
-    drawBeam(
-      { x: parseFloat(fromEl.style.left) || 0, y: parseFloat(fromEl.style.top) || 0 },
-      { x: parseFloat(toEl.style.left) || 0, y: parseFloat(toEl.style.top) || 0 }
-    );
-  } else {
-    drawBeam(null, null);
-  }
+    // Collision detection: highlight merge target
+    const target = findMergeTarget(dragTarget);
+    if (target) {
+      const fromEl = dragTarget;
+      const toEl = target.el;
+      drawBeam(
+        { x: parseFloat(fromEl.style.left) || 0, y: parseFloat(fromEl.style.top) || 0 },
+        { x: parseFloat(toEl.style.left) || 0, y: parseFloat(toEl.style.top) || 0 }
+      );
+    } else {
+      drawBeam(null, null);
+    }
 
-  if (target && target.el !== mergeTarget?.el) {
-    // New merge target found
-    if (mergeTarget) mergeTarget.el.classList.remove('merge-target');
-    mergeTarget = target;
-    mergeTarget.el.classList.add('merge-target');
-  } else if (!target && mergeTarget) {
-    // No longer overlapping
-    mergeTarget.el.classList.remove('merge-target');
-    mergeTarget = null;
-  }
+    if (target && target.el !== mergeTarget?.el) {
+      if (mergeTarget) mergeTarget.el.classList.remove('merge-target');
+      mergeTarget = target;
+      mergeTarget.el.classList.add('merge-target');
+    } else if (!target && mergeTarget) {
+      mergeTarget.el.classList.remove('merge-target');
+      mergeTarget = null;
+    }
+  } catch (err) { /* mousemove errors are non-critical */ }
 });
 
 window.addEventListener('mouseup', () => {
-  clearSimilarHighlights();
-  if (dragTarget) {
-    dragTarget.classList.remove('dragging');
-    drawBeam(null, null); // Clear energy beam
+  try {
+    clearSimilarHighlights();
+    if (dragTarget) {
+      dragTarget.classList.remove('dragging');
+      drawBeam(null, null);
 
-    // Check for merge on drop
-    if (mergeTarget) {
-      mergeTarget.el.classList.remove('merge-target');
-      const draggedId = Number(dragTarget.dataset.id);
-      const targetId = Number(mergeTarget.el.dataset.id);
-      mergeNodes(draggedId, targetId);
-      mergeTarget = null;
+      if (mergeTarget) {
+        mergeTarget.el.classList.remove('merge-target');
+        const draggedId = Number(dragTarget.dataset.id);
+        const targetId = Number(mergeTarget.el.dataset.id);
+        mergeNodes(draggedId, targetId);
+        mergeTarget = null;
+      }
+
+      dragTarget = null;
+      isDragging = false;
+      dragNodeId = null;
     }
-
-    dragTarget = null;
-    isDragging = false;
-    dragNodeId = null;
-  }
+  } catch (err) { console.warn('[Drag] mouseup error:', err.message); }
 });
 
 // ============================================================

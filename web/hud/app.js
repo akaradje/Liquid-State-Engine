@@ -17,6 +17,7 @@ class HUDApp extends Component {
     this.state = {
       nodeCount: 0,
       avgConfidence: 0,
+      audioMuted: false,
     };
     this._tick = this._tick.bind(this);
   }
@@ -40,7 +41,8 @@ class HUDApp extends Component {
       }
       avgConf = Math.round((sum / els.length) * 100);
     }
-    this.setState({ nodeCount: count, avgConfidence: avgConf });
+    const muted = (() => { try { return localStorage.getItem('lse-audio-muted') === 'true'; } catch { return false; } })();
+    this.setState({ nodeCount: count, avgConfidence: avgConf, audioMuted: muted });
   }
 
   _trustBar(pct) {
@@ -53,7 +55,7 @@ class HUDApp extends Component {
     return html`
       <div class="hud-root">
         <${StatsPanel} nodes=${state.nodeCount} trust=${state.avgConfidence} trustBar=${this._trustBar(state.avgConfidence)} />
-        <${InfoPanel} />
+        <${InfoPanel} muted=${state.audioMuted} />
       </div>
     `;
   }
@@ -71,19 +73,29 @@ const StatsPanel = ({ nodes, trust, trustBar }) => html`
         <span>${trust}%</span>
       </span>
     </div>
+    <div class="hud-stat"><span class="hud-label">ONLINE</span> <span id="collab-count" class="hud-val">1</span></div>
+    <div class="hud-stat"><span class="hud-label">SIMILAR</span> <span id="sem-sim-count" class="hud-val">—</span></div>
+    <div class="hud-stat"><span class="hud-label">TENSIONS</span> <span id="tension-count" class="hud-val">—</span></div>
+    <div class="hud-stat"><span class="hud-label">LEARNER</span> <span id="learner-status" class="hud-val">—</span></div>
     <div class="hud-stat"><span class="hud-label">ENGINE</span> <span class="hud-val hud-ok">DOM Lite</span></div>
   </div>
 `;
 
 // ---- Info Panel (top-right) ----
 
-const InfoPanel = () => html`
-  <div class="hud-panel hud-top-right" style="font-size:10px;gap:8px;display:flex;align-items:center;">
-    <span style="color:rgba(140,200,255,0.6)">Double-click empty space → Create</span>
-    <span style="color:rgba(100,160,220,0.4)">|</span>
-    <span style="color:rgba(140,200,255,0.6)">Double-click node → Fracture</span>
-    <span style="color:rgba(100,160,220,0.4)">|</span>
-    <span style="color:rgba(100,200,160,0.6)">Drag → Move</span>
+const InfoPanel = ({ muted }) => html`
+  <div class="hud-panel hud-top-right" style="font-size:10px;gap:6px;display:flex;align-items:center;flex-wrap:wrap;">
+    <span style="color:rgba(140,200,255,0.55)">DblClick→Create</span>
+    <span style="color:rgba(100,160,220,0.3)">|</span>
+    <span style="color:rgba(140,200,255,0.55)">DblClick node→Fracture</span>
+    <span style="color:rgba(100,160,220,0.3)">|</span>
+    <span style="color:rgba(100,200,160,0.55)">Drag→Merge</span>
+    <span style="color:rgba(100,160,220,0.3)">|</span>
+    <span style="color:${muted ? 'rgba(255,120,120,0.55)' : 'rgba(120,220,160,0.55)'}">${muted ? '🔇M' : '🔊M'}</span>
+    <span style="color:rgba(100,160,220,0.3)">|</span>
+    <span style="color:rgba(180,200,140,0.5)">S:Save</span>
+    <span style="color:rgba(180,200,140,0.5)">L:Load</span>
+    <span style="color:rgba(200,140,140,0.5)">X:Clear</span>
   </div>
 `;
 

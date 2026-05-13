@@ -4,11 +4,12 @@
   "description": "Interactive Visual Computing Platform - CPU-only, DOM-free rendering engine powered by Rust/WebAssembly",
   "private": true,
   "scripts": {
-    "build:wasm": "wasm-pack build --target web --out-dir pkg",
-    "build:wasm:release": "wasm-pack build --target web --out-dir pkg --release",
-    "dev": "npx http-server ./web -p 8080 --cors -c-1",
-    "serve": "npx http-server . -p 8080 --cors -c-1 -a 0.0.0.0",
-    "clean": "rm -rf pkg target"
+    "build:wasm": "wasm-pack build --target web --out-dir web/pkg",
+    "build:wasm:release": "wasm-pack build --target web --out-dir web/pkg --release",
+    "dev": "npm run build:wasm && node scripts/serve.js",
+    "serve": "node scripts/serve.js",
+    "collab": "node scripts/collab-server.js",
+    "clean": "rm -rf web/pkg target"
   },
   "keywords": [
     "wasm",
@@ -23,6 +24,7 @@
   "author": "Liquid-State Engine Team",
   "license": "MIT",
   "dependencies": {
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "ws": "^8.20.1"
   }
 }

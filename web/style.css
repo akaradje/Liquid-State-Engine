@@ -205,7 +205,6 @@
 /* ---- Merging state (boxes fading out during API call) ---- */
 .data-box.merging {
   opacity: 0.4;
-  pointer-events: none;
   border-color: rgba(255, 200, 80, 0.4);
   animation: mergingShrink 0.8s ease-in-out infinite;
 }
@@ -604,4 +603,9 @@
 @keyframes suggestFloat {
   0%, 100% { transform: translate(0, -50%) translateY(0); }
   50%      { transform: translate(0, -50%) translateY(-8px); }
+}
+
+/* Force-fix: guarantee data-boxes always receive pointer events */
+.data-box {
+  pointer-events: auto !important;
 }

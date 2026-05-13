@@ -216,7 +216,7 @@ function handleEnrich(req, res) {
         : maybeGroundWithWikipedia(keyword);
 
       groundingPromise.then((groundedSource) => {
-      const { domainPrompt } = applyGrounding(groundedSource);
+      let { domainPrompt } = applyGrounding(groundedSource);
 
       // Step 2: Build domain-specific decomposition prompt
       // (domainPrompt already computed by applyGrounding)

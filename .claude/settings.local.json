@@ -35,7 +35,8 @@
       "Bash(node --check web/tension-detector.js)",
       "Bash(node --check web/meta-learner.js)",
       "Bash(gh pr create --title 'Fix: JSON parsing for non-English keywords' --body 'Fixes Unterminated string errors when processing Thai/Unicode text. *)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(timeout 3 node scripts/serve.js)"
     ]
   }
 }

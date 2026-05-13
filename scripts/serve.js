@@ -224,11 +224,8 @@ function handleEnrich(req, res) {
       // Bug 2 fix: handle non-English input gracefully
       domainPrompt += ' The user may input non-English text. Always respond with English component names in a JSON array regardless of input language.';
 
-      // Atomic Rule: prevent hallucination on indivisible concepts
-      // Macro-First Rule: prioritize structural/anatomical/functional levels
-      domainPrompt += ' MACRO-FIRST RULE: Prioritize macroscopic, structural, anatomical, or functional breakdowns. Example (Anatomy): "Human Skeleton" MUST return ["Axial Skeleton","Appendicular Skeleton","Bone Types (Long, Short, Flat)"] — NOT collagen or calcium. Example (Technology): "Computer" MUST return ["CPU","Motherboard","RAM","Storage"] — NOT silicon. NEVER jump to microscopic, chemical, or atomic levels unless the input is already microscopic (e.g., "DNA","Atom").';
-
-      domainPrompt += ' ATOMIC RULE: If the concept is logically, mathematically, or physically indivisible (e.g., "The Number 1", "Quark", "Nothingness", "Point"), DO NOT hallucinate random sub-components. Instead return exactly one component starting with "ATOMIC: " followed by a brief definition of why it cannot be divided. Example: ["ATOMIC: The fundamental mathematical unit"].';
+      // 6-Level LOD Framework — strict one-level-at-a-time decomposition
+      domainPrompt += ' You are an ontological cartographer. Break down using ONE LEVEL OF DETAIL at a time. THE 6 LODs: L1=Category/Field (e.g.,Anatomy,Transportation), L2=System/Entity (e.g.,Human Skeleton,Car), L3=Macro-Parts/Sub-systems (e.g.,Axial Skeleton,Engine), L4=Micro-Components (e.g.,Skull,Piston), L5=Materials/Tissues (e.g.,Bone Tissue,Steel), L6=Chemical/Atomic (e.g.,Calcium,Carbon). RULES: 1. Assess LOD of input concept. 2. Output 4-7 components at EXACTLY LOD+1. 3. NEVER skip levels. If given L2 (Skeleton), output L3 parts, NOT L5 materials. 4. If concept is L6 or indivisible, return ["ATOMIC: [reason]"].';
 
       // Apply user profile preferences to the prompt
       const userProfile = parsed.userProfile;
@@ -415,13 +412,13 @@ function parseComponents(text, keyword) {
 // ---- Domain Analysis (Step 1 of 2-step fracture reasoning) ----
 
 const DOMAIN_PROMPTS = {
-  science:    'Break this scientific concept into its structural, functional, or systemic components. Use the highest-level classification that still provides meaningful detail. Use precise scientific terminology.',
-  technology: 'Decompose this technology into its engineering subsystems, protocols, and architectural layers.',
-  philosophy: 'Analyze this philosophical concept into its core epistemological premises, axioms, and logical arguments.',
-  art:        'Break this artistic concept into its aesthetic elements, techniques, compositional principles, and cultural influences.',
-  nature:     'Decompose this natural entity into its biological, ecological, or geological components and processes.',
-  social:     'Analyze this social concept into its structural components: institutions, behaviors, norms, and power dynamics.',
-  general:    'Break down this concept into 4 to 7 fundamental components using the most appropriate analytical framework.',
+  science:    'Classify this scientific concept to its correct LOD level, then decompose exactly one level deeper. Use precise terminology.',
+  technology: 'Classify this technology to its correct LOD level, then decompose exactly one level deeper into subsystems.',
+  philosophy: 'Classify this philosophical concept, then decompose exactly one level deeper into premises or branches.',
+  art:        'Classify this artistic concept, then decompose exactly one level deeper into elements or techniques.',
+  nature:     'Classify this natural entity, then decompose exactly one level deeper into components or processes.',
+  social:     'Classify this social concept, then decompose exactly one level deeper into structures or dynamics.',
+  general:    'Classify this concept to its correct LOD level, then decompose exactly one level deeper (4-7 components).',
 };
 
 /**

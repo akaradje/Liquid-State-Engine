@@ -532,15 +532,7 @@ function handleMerge(keywordA, keywordB, res, context = '', retryCount = 0) {
     messages: [
       {
         role: 'system',
-        content: `You are a Knowledge Synthesizer. Given two concepts, find the EMERGENT PROPERTY that arises from their intersection — not just a combination, but a genuinely new concept that neither parent alone could produce. Think: What new capability, phenomenon, or principle emerges when these two interact?
-
-Return ONLY a valid JSON object with exactly these fields:
-- "result": the emergent concept name (1-3 words)
-- "reasoning": a brief explanation of the synthesis (1 sentence)
-- "emergentProperty": what is genuinely NEW that neither parent had alone
-- "confidence": a number from 0.0 to 1.0 indicating how strong the emergent connection is
-
-Example: {"result":"Photosynthesis","reasoning":"Light energy captured and converted to chemical energy by combining solar radiation with leaf biology","emergentProperty":"Self-sustaining energy conversion from inorganic inputs","confidence":0.92}`,
+        content: `Combine "${keywordA}" and "${keywordB}" into ONE emergent word. Return ONLY JSON: {"result":"NewConcept","reasoning":"1 sentence","emergentProperty":"what is genuinely new","confidence":0.0-1.0}. Example: {"result":"Steam","reasoning":"Water heated by fire becomes gaseous","emergentProperty":"Phase transition from liquid to gas","confidence":0.85}`,
       },
       {
         role: 'user',
@@ -667,9 +659,9 @@ function sendFallback(res, model, tier, keywordA, keywordB) {
     'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier',
   });
   res.end(JSON.stringify({
-    result: 'Emergent Compound',
-    reasoning: `Synthesized from ${keywordA} and ${keywordB} via heuristic combination.`,
-    emergentProperty: 'Novel conceptual intersection',
+    result: `Compound ${keywordA}-${keywordB}`,
+    reasoning: `Heuristic synthesis of ${keywordA} and ${keywordB}.`,
+    emergentProperty: 'Conceptual combination',
     confidence: 0.35,
     model,
     tier,
@@ -858,9 +850,7 @@ function handleSuggest(req, res) {
       return;
     }
 
-    const prompt = `Given these concepts that exist in the user's workspace: ${keywords.join(', ')}.
-
-Suggest 3 NEW concepts that would create interesting emergent properties when merged with any of the existing ones. Choose concepts from different domains than the existing ones. Return ONLY a JSON array of 3 strings. Example: ["Photosynthesis", "Blockchain", "Renaissance"]`;
+    const prompt = `Think outside the box. Given these workspace concepts: ${keywords.join(', ')}. Suggest 3 completely NEW concepts from different domains that would create fascinating emergent properties when combined with any existing concept. Be creative and unexpected. Return ONLY a valid JSON array of exactly 3 strings. Example: ["Entropy", "Bioluminescence", "Recursion"]`;
 
     const requestBody = JSON.stringify({
       model: MODEL_LITE,
@@ -1010,7 +1000,7 @@ function handleTension(req, res) {
     }
 
     // Detect tensions
-    const prompt = `Analyze these concepts: ${keywords.join(', ')}. Identify up to 4 pairs that represent interesting tensions, contradictions, or dialectical opposites. Return ONLY JSON: {"tensions":[{"a":"ConceptA","b":"ConceptB","type":"opposition|paradox|dialectic","intensity":0.0-1.0,"explanation":"1 sentence"}]}. If none found, return {"tensions":[]}.`;
+    const prompt = `Identify conceptual frictions among these: ${keywords.join(', ')}. Even subtle opposites like "Order" vs "Chaos" or "Light" vs "Dark" MUST be detected. Return at least 2 pairs if they exist in the list. Intensity should be 0.8+ for direct opposites. Return ONLY JSON: {"tensions":[{"a":"ConceptA","b":"ConceptB","type":"opposition|paradox|dialectic","intensity":0.0-1.0,"explanation":"1 sentence"}]}`;
     const reqBody = JSON.stringify({ model: MODEL_LITE, messages: [{ role:'system', content:'You are a dialectical analyst. Return ONLY JSON.' },{ role:'user', content: prompt }], temperature:0.3, max_tokens:300, stream:false });
     const opts = { hostname:'api.deepseek.com', port:443, path:'/v1/chat/completions', method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${DEEPSEEK_API_KEY}`, 'Accept':'application/json' } };
     const apiReq = https.request(opts, (apiRes) => { let d=''; apiRes.on('data',c=>{d+=c}); apiRes.on('end',()=>{ try { const p=JSON.parse(d); const r=p?.choices?.[0]?.message?.content?.trim()??'{}'; const c=r.replace(/```(?:json)?\s*/gi,'').replace(/```/g,'').trim(); const t=JSON.parse(c); tensionCache.hash=hash; tensionCache.tensions=t.tensions||[]; res.writeHead(200,{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}); res.end(JSON.stringify({tensions:tensionCache.tensions})); console.log(`[Tension] ${tensionCache.tensions.length} pairs detected`); } catch { res.writeHead(200,{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}); res.end(JSON.stringify({tensions:[]})); } }); });
@@ -1186,10 +1176,7 @@ function handleClassify(req, res) {
     const keyword = (parsed.keyword || '').trim();
     if (!keyword) { res.writeHead(400); res.end(JSON.stringify({ error: 'keyword required' })); return; }
 
-    const prompt = `Classify "${keyword}" into a taxonomic hierarchy. Return JSON with the full IS-A chain from most specific to most general (5-7 levels).
-For physical things: "Poodle" → ["Poodle","Dog","Mammal","Animal","Living Thing","Entity"]
-For abstract: "Justice" → ["Justice","Ethical Principle","Philosophy","Abstract Concept","Human Thought"]
-Return ONLY: {"chain":["most specific",...,"most general"],"confidence":0.0-1.0}`;
+    const prompt = `You are a strict Taxonomist. For the word "${keyword}", you MUST return a full hierarchy chain of exactly 6 levels from specific to general. Example: "Poodle" → ["Poodle","Dog","Canine","Mammal","Animal","Entity"]. Return ONLY valid JSON: {"chain":["most specific",...,"most general"],"confidence":0.0-1.0}`;
 
     const reqBody = JSON.stringify({
       model: MODEL_LITE,

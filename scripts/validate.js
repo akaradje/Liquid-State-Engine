@@ -13,7 +13,16 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.resolve(__dirname, '..');
+// Find project root: try GIT_WORK_TREE, then cwd, then __dirname relatives
+let ROOT = process.env.GIT_WORK_TREE || '';
+if (!ROOT) {
+  const candidates = [process.cwd(), path.resolve(__dirname, '..'), path.resolve(__dirname, '..', '..', '..')];
+  ROOT = candidates.find(d => fs.existsSync(path.join(d, '.git'))) || candidates.find(d => fs.existsSync(path.join(d, 'web', 'index.html'))) || '';
+}
+if (!ROOT || !fs.existsSync(path.join(ROOT, 'web', 'index.html'))) {
+  console.error('❌ Cannot find project root. Run from repo root or scripts/ directory.');
+  process.exit(1);
+}
 const WEB = path.join(ROOT, 'web');
 const SCRIPTS = path.join(ROOT, 'scripts');
 

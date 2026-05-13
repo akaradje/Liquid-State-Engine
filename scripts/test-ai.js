@@ -227,6 +227,49 @@ async function main() {
     return true;
   });
 
+  await sleep(DELAY);
+
+  // ================================================================
+  // EXTREME STRESS TESTS (60s timeout, deep reasoning required)
+  // ================================================================
+  console.log('\n--- Extreme Stress Tests (60s timeout) ---\n');
+
+  // ---- Extreme 1: Paradox Merge (unrelated concepts) ----
+  await testEndpoint('🔥 EXTREME: Merge unrelated ("Quantum Mechanics" + "Spicy Papaya Salad")', 'POST', '/api/enrich', {
+    mode: 'merge', keywords: ['Quantum Mechanics', 'Spicy Papaya Salad'],
+  }, (res) => {
+    if (!res.result || typeof res.result !== 'string') return 'result missing';
+    if (res.result === 'Quantum Mechanics' || res.result === 'Spicy Papaya Salad') return 'result is an input word';
+    return true;
+  });
+  await sleep(DELAY);
+
+  // ---- Extreme 2: Void Fracture (abstract non-physical concept) ----
+  await testEndpoint('🔥 EXTREME: Fracture void ("Nothingness")', 'POST', '/api/enrich', { keyword: 'Nothingness' }, (res) => {
+    if (!Array.isArray(res.components)) return 'components not an array';
+    if (res.components.length < 2) return `only ${res.components.length} components for abstract concept`;
+    return true;
+  });
+  await sleep(DELAY);
+
+  // ---- Extreme 3: Domain-Specific Complexity ----
+  await testEndpoint('🔥 EXTREME: Domain merge ("Thai Criminal Investigation" + "Decentralized Blockchain")', 'POST', '/api/enrich', {
+    mode: 'merge', keywords: ['Thai Criminal Investigation', 'Decentralized Blockchain'],
+  }, (res) => {
+    if (!res.result || typeof res.result !== 'string') return 'result missing';
+    if (res.result.length < 3) return 'result too short';
+    return true;
+  });
+  await sleep(DELAY);
+
+  // ---- Extreme 4: Atomic Concept (should NOT hallucinate) ----
+  await testEndpoint('🔥 EXTREME: Fracture atomic concept ("The Number 1")', 'POST', '/api/enrich', { keyword: 'The Number 1' }, (res) => {
+    if (!Array.isArray(res.components)) return 'components not an array';
+    // Atomic concepts should produce few, meaningful components — not random junk
+    if (res.components.length > 8) return `too many components (${res.components.length}) — may be hallucinating`;
+    return true;
+  });
+
   // ---- Summary ----
   console.log(`\n${'═'.repeat(50)}`);
   if (failed === 0) {

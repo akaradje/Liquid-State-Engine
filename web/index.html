@@ -14,11 +14,19 @@
             background: #0a0a14;
             font-family: 'SF Mono', 'Fira Code', monospace;
         }
+        #relations-svg {
+            position: fixed; inset: 0;
+            width: 100vw; height: 100vh;
+            z-index: 50; pointer-events: none;
+        }
     </style>
 </head>
 <body>
     <!-- Full-screen workspace (replaces canvas) -->
     <div id="workspace"></div>
+
+    <!-- SVG layer for relationship lines (between workspace and data-boxes) -->
+    <svg id="relations-svg"></svg>
 
     <!-- Create button (floating) -->
     <button id="create-btn">+ New Node</button>

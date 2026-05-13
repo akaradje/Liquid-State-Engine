@@ -34,7 +34,7 @@ function httpRequest(method, path, body) {
       });
     });
     req.on('error', reject);
-    req.setTimeout(30000, () => { req.destroy(); reject(new Error('Timeout 30s')); });
+    req.setTimeout(60000, () => { req.destroy(); reject(new Error('Timeout 60s')); });
     if (body) req.write(JSON.stringify(body));
     req.end();
   });

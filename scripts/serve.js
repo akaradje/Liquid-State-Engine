@@ -185,8 +185,37 @@ function handleEnrich(req, res) {
       const { domain, depth, reasoning } = domainResult;
       console.log(`[DeepSeek Domain] "${keyword}" → ${domain} (depth: ${depth})`);
 
+      // Step 1.5: Optionally ground with Wikipedia for factual concepts
+      const applyGrounding = (groundedSource) => {
+        let domainPrompt = getDomainPrompt(domain, depth);
+        if (groundedSource) {
+          domainPrompt += ` Use this factual context for grounding: ${groundedSource.slice(0, 400)}`;
+        }
+        return { domainPrompt, groundedSource };
+      };
+
+      const groundingPromise = parsed.skipGrounding
+        ? Promise.resolve(null)
+        : maybeGroundWithWikipedia(keyword);
+
+      groundingPromise.then((groundedSource) => {
+      const { domainPrompt } = applyGrounding(groundedSource);
+
       // Step 2: Build domain-specific decomposition prompt
-      const domainPrompt = getDomainPrompt(domain, depth);
+      // (domainPrompt already computed by applyGrounding)
+
+      // Apply user profile preferences to the prompt
+      const userProfile = parsed.userProfile;
+      if (userProfile) {
+        if (userProfile.preferredStyle === 'concise') {
+          domainPrompt += ' Use terse, precise technical terms. Keep component names short (1-2 words).';
+        } else if (userProfile.preferredStyle === 'poetic') {
+          domainPrompt += ' Use evocative, metaphorical language. Component names can be descriptive phrases.';
+        }
+        if (userProfile.preferredLength) {
+          domainPrompt += ` Return exactly ${userProfile.preferredLength} components.`;
+        }
+      }
 
       let userMessage = keyword;
       if (context) {
@@ -244,28 +273,53 @@ function handleEnrich(req, res) {
           try {
             const parsed = JSON.parse(data);
             const rawText = parsed?.choices?.[0]?.message?.content?.trim() ?? '';
-            const components = parseComponents(rawText, keyword);
 
+            // Self-critique reflection (unless disabled)
+            const enableReflection = !parsed?.disableReflection;
+            if (enableReflection) {
+              reflectAndImprove(domainPrompt, rawText, context, (reflection) => {
+                const finalText = reflection?.improved || rawText;
+                const components = parseComponents(finalText, keyword);
+
+                const responseBody = JSON.stringify({
+                  components,
+                  model, tier, keyword, domain, depth, reasoning,
+                  reflection: reflection ? {
+                    attempts: reflection.attempts,
+                    critique: reflection.critique,
+                    scores: reflection.scores,
+                    finalScore: reflection.finalScore,
+                  } : null,
+                });
+
+                res.writeHead(200, {
+                  'Content-Type': 'application/json',
+                  'X-DeepSeek-Model': model, 'X-DeepSeek-Tier': tier,
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier',
+                });
+                res.end(responseBody);
+                console.log(`[DeepSeek] "${keyword}" → ${components.length} components (reflected: ${reflection ? 'yes' : 'no'}) via ${model}`);
+              });
+              return; // Don't fall through — reflection handles the response
+            }
+
+            // No reflection: respond immediately
+            const components = parseComponents(rawText, keyword);
             const responseBody = JSON.stringify({
-              components,
-              model,
-              tier,
-              keyword,
-              domain,
-              depth,
-              reasoning,
+              components, model, tier, keyword, domain, depth, reasoning,
+              grounded: !!groundedSource,
+              groundedSource: groundedSource?.slice(0, 200) || null,
             });
 
             res.writeHead(200, {
               'Content-Type': 'application/json',
-              'X-DeepSeek-Model': model,
-              'X-DeepSeek-Tier': tier,
+              'X-DeepSeek-Model': model, 'X-DeepSeek-Tier': tier,
               'Access-Control-Allow-Origin': '*',
               'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier',
             });
             res.end(responseBody);
-
-            console.log(`[DeepSeek] "${keyword}" → ${components.length} components (domain: ${domain}, depth: ${depth}) via ${model}`);
+            console.log(`[DeepSeek] "${keyword}" → ${components.length} components via ${model}`);
           } catch (err) {
             console.error('[DeepSeek] Parse error:', err.message, 'raw:', data.slice(0, 200));
             const fallbackComponents = keyword.split(/[\s,;]+/).filter(Boolean);
@@ -298,6 +352,7 @@ function handleEnrich(req, res) {
 
       apiReq.write(requestBody);
       apiReq.end();
+      }); // close groundingPromise.then()
     });
   });
 }
@@ -518,23 +573,37 @@ Example: {"result":"Photosynthesis","reasoning":"Light energy captured and conve
 
           const finalResult = result || 'Emergent Compound';
 
-          res.writeHead(200, {
-            'Content-Type': 'application/json',
-            'X-DeepSeek-Model': model,
-            'X-DeepSeek-Tier': tier,
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier',
-          });
-          res.end(JSON.stringify({
-            result: finalResult,
-            reasoning,
-            emergentProperty,
-            confidence,
-            model,
-            tier,
-          }));
+          // Self-critique reflection for merge
+          const mergeSysPrompt = 'You are a Knowledge Synthesizer. Find EMERGENT PROPERTIES from concept intersections.';
+          reflectAndImprove(mergeSysPrompt, JSON.stringify({ result: finalResult, reasoning, emergentProperty, confidence }), context, (reflection) => {
+            let final = { result: finalResult, reasoning, emergentProperty, confidence };
+            if (reflection?.improved) {
+              try {
+                const improved = JSON.parse(reflection.improved.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim());
+                if (improved.result) final = improved;
+              } catch { /* keep original */ }
+            }
 
-          console.log(`[DeepSeek Merge] "${keywordA}" + "${keywordB}" → "${finalResult}" (confidence: ${confidence}) via ${model}`);
+            res.writeHead(200, {
+              'Content-Type': 'application/json',
+              'X-DeepSeek-Model': model, 'X-DeepSeek-Tier': tier,
+              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier',
+            });
+            res.end(JSON.stringify({
+              result: final.result,
+              reasoning: final.reasoning,
+              emergentProperty: final.emergentProperty,
+              confidence: final.confidence,
+              model, tier,
+              reflection: reflection ? {
+                attempts: reflection.attempts,
+                critique: reflection.critique,
+                finalScore: reflection.finalScore,
+              } : null,
+            }));
+            console.log(`[DeepSeek Merge] "${keywordA}" + "${keywordB}" → "${final.result}" (reflected) via ${model}`);
+          });
         } catch (err) {
           console.error('[DeepSeek Merge] Parse error:', err.message);
           if (retryCount < 1) {
@@ -827,6 +896,906 @@ Suggest 3 NEW concepts that would create interesting emergent properties when me
   });
 }
 
+// ---- Counterfactual Reasoning ----
+
+function handleCounterfactual(req, res) {
+  if (req.method !== 'POST') { res.writeHead(405); res.end(JSON.stringify({ error: 'Method not allowed' })); return; }
+  if (!DEEPSEEK_API_KEY) { res.writeHead(200, { 'Content-Type':'application/json', 'Access-Control-Allow-Origin':'*' }); res.end(JSON.stringify({})); return; }
+
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', () => {
+    let p;
+    try { p = JSON.parse(body); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    const keyword = (p.keyword || '').trim();
+    const mode = p.mode || 'absent';
+    if (!keyword) { res.writeHead(400); res.end(JSON.stringify({ error: 'keyword required' })); return; }
+
+    let prompt;
+    const prompts = {
+      absent: `What would the world look like if "${keyword}" did not exist? What would fill its role? Return JSON: {"alternative":"1-3 word concept","consequences":["consequence 1","consequence 2","consequence 3"],"reasoning":"1 sentence"}`,
+      inverted: `What is the logical inverse of "${keyword}"? Not just opposite, but what would occupy its inverse position in its domain? Return JSON: {"inverse":"1-3 words","reasoning":"1 sentence","sharedContext":"the domain/framework both exist in"}`,
+      extreme: `What is "${keyword}" taken to an absolute extreme? Amplified 1000x? Return JSON: {"extreme":"the amplified concept","implications":["implication 1","implication 2","implication 3"]}`,
+    };
+
+    prompt = prompts[mode] || prompts.absent;
+
+    const reqBody = JSON.stringify({
+      model: MODEL_STANDARD,
+      messages: [
+        { role:'system', content:'You explore counterfactual worlds. Return ONLY valid JSON. No markdown.' },
+        { role:'user', content: prompt },
+      ],
+      temperature: 0.6, max_tokens: 250, stream: false,
+    });
+
+    const opts = { hostname:'api.deepseek.com', port:443, path:'/v1/chat/completions', method:'POST',
+      headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${DEEPSEEK_API_KEY}`, 'Accept':'application/json' } };
+
+    const apiReq = https.request(opts, (apiRes) => {
+      let d = '';
+      apiRes.on('data', c => { d += c; });
+      apiRes.on('end', () => {
+        if (apiRes.statusCode !== 200) { res.writeHead(502); res.end(JSON.stringify({ error:'API error' })); return; }
+        try {
+          const parsed = JSON.parse(d);
+          const raw = parsed?.choices?.[0]?.message?.content?.trim() ?? '{}';
+          const cleaned = raw.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+          const result = JSON.parse(cleaned);
+          res.writeHead(200, { 'Content-Type':'application/json', 'Access-Control-Allow-Origin':'*' });
+          res.end(JSON.stringify(result));
+          console.log(`[Counterfactual] "${keyword}" (${mode}) → done`);
+        } catch { res.writeHead(200, { 'Content-Type':'application/json', 'Access-Control-Allow-Origin':'*' }); res.end(JSON.stringify({})); }
+      });
+    });
+    apiReq.on('error', () => { res.writeHead(502); res.end(JSON.stringify({ error:'Network error' })); });
+    apiReq.write(reqBody); apiReq.end();
+  });
+}
+
+// ---- Tension Detection & Resolution ----
+
+const tensionCache = { hash: '', tensions: [] };
+
+function handleTension(req, res) {
+  if (req.method !== 'POST') { res.writeHead(405); res.end(JSON.stringify({ error: 'Method not allowed' })); return; }
+  if (!DEEPSEEK_API_KEY) { res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ tensions: [] })); return; }
+
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', () => {
+    let parsed;
+    try { parsed = JSON.parse(body); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    const keywords = (parsed.keywords || []).filter(Boolean);
+    if (keywords.length < 4) { res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ tensions: [] })); return; }
+
+    // Cache: only re-run if keywords changed > 20%
+    const hash = keywords.sort().join('|');
+    if (tensionCache.hash === hash) { res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ tensions: tensionCache.tensions })); return; }
+
+    // Handle resolve request
+    if (parsed.resolve) {
+      const prompt = `These two concepts are in tension: "${parsed.a}" vs "${parsed.b}". What is a SYNTHESIS concept that transcends or resolves this dialectical opposition? Return ONLY valid JSON: {"synthesis":"...","explanation":"1 sentence","confidence":0-1}. Example: "Order" vs "Chaos" → {"synthesis":"Complexity","explanation":"Complex systems exist at the edge of order and chaos","confidence":0.85}`;
+      const reqBody = JSON.stringify({ model: MODEL_STANDARD, messages: [{ role:'system', content:'You are a dialectical synthesizer. Return ONLY JSON.' },{ role:'user', content: prompt }], temperature:0.35, max_tokens:150, stream:false });
+      const opts = { hostname:'api.deepseek.com', port:443, path:'/v1/chat/completions', method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${DEEPSEEK_API_KEY}`, 'Accept':'application/json' } };
+      const apiReq = https.request(opts, (apiRes) => { let d=''; apiRes.on('data',c=>{d+=c}); apiRes.on('end',()=>{ try { const p=JSON.parse(d); const r=p?.choices?.[0]?.message?.content?.trim()??'{}'; const c=r.replace(/```(?:json)?\s*/gi,'').replace(/```/g,'').trim(); const s=JSON.parse(c); res.writeHead(200,{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}); res.end(JSON.stringify(s)); } catch { res.writeHead(200,{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}); res.end(JSON.stringify({synthesis:'Synthesis',explanation:'Dialectical resolution',confidence:0.5})); } }); });
+      apiReq.on('error',()=>{ res.writeHead(502); res.end(JSON.stringify({error:'Network error'})); });
+      apiReq.write(reqBody); apiReq.end();
+      return;
+    }
+
+    // Detect tensions
+    const prompt = `Analyze these concepts: ${keywords.join(', ')}. Identify up to 4 pairs that represent interesting tensions, contradictions, or dialectical opposites. Return ONLY JSON: {"tensions":[{"a":"ConceptA","b":"ConceptB","type":"opposition|paradox|dialectic","intensity":0.0-1.0,"explanation":"1 sentence"}]}. If none found, return {"tensions":[]}.`;
+    const reqBody = JSON.stringify({ model: MODEL_LITE, messages: [{ role:'system', content:'You are a dialectical analyst. Return ONLY JSON.' },{ role:'user', content: prompt }], temperature:0.3, max_tokens:300, stream:false });
+    const opts = { hostname:'api.deepseek.com', port:443, path:'/v1/chat/completions', method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${DEEPSEEK_API_KEY}`, 'Accept':'application/json' } };
+    const apiReq = https.request(opts, (apiRes) => { let d=''; apiRes.on('data',c=>{d+=c}); apiRes.on('end',()=>{ try { const p=JSON.parse(d); const r=p?.choices?.[0]?.message?.content?.trim()??'{}'; const c=r.replace(/```(?:json)?\s*/gi,'').replace(/```/g,'').trim(); const t=JSON.parse(c); tensionCache.hash=hash; tensionCache.tensions=t.tensions||[]; res.writeHead(200,{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}); res.end(JSON.stringify({tensions:tensionCache.tensions})); console.log(`[Tension] ${tensionCache.tensions.length} pairs detected`); } catch { res.writeHead(200,{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}); res.end(JSON.stringify({tensions:[]})); } }); });
+    apiReq.on('error',()=>{ res.writeHead(502); res.end(JSON.stringify({error:'Network error'})); });
+    apiReq.write(reqBody); apiReq.end();
+  });
+}
+
+// ---- Proactive Curiosity Engine ----
+
+function handleCuriosity(req, res) {
+  if (req.method !== 'POST') { res.writeHead(405); res.end(JSON.stringify({ error: 'Method not allowed' })); return; }
+  if (!DEEPSEEK_API_KEY) { res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ type: 'explore', prompt: 'Try connecting two concepts by dragging one onto another.', suggestedNodes: [], reasoning: 'No API key configured' })); return; }
+
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', () => {
+    let parsed;
+    try { parsed = JSON.parse(body); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+
+    const keywords = (parsed.workspace || []).map(k => k.keyword).filter(Boolean);
+    const neverFractured = parsed.neverFractured || [];
+    const neverMerged = parsed.neverMerged || [];
+    const feedback = parsed.feedback || [];
+
+    if (keywords.length < 3) { res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ type: 'explore', prompt: 'Add a few more concepts to your workspace!', suggestedNodes: [], reasoning: 'Not enough nodes' })); return; }
+
+    // Bias: prefer types with higher acceptance rate
+    const typeBias = {};
+    for (const f of feedback) {
+      if (!typeBias[f.type]) typeBias[f.type] = { total: 0, accepted: 0 };
+      typeBias[f.type].total++;
+      if (f.outcome === 'accepted') typeBias[f.type].accepted++;
+    }
+    const preferredType = Object.entries(typeBias)
+      .filter(([, v]) => v.total >= 3)
+      .sort((a, b) => (b[1].accepted / b[1].total) - (a[1].accepted / a[1].total))[0]?.[0] || 'any';
+
+    const prompt = `Given this user's workspace concepts: ${keywords.slice(0, 15).join(', ')}.
+Never fractured: ${neverFractured.slice(0, 3).join(', ') || 'none'}.
+Never merged: ${neverMerged.slice(0, 3).join(', ') || 'none'}.
+User prefers: ${preferredType} type suggestions.
+
+Generate ONE interesting question or experiment. Use one of these formats:
+- "What emerges from [X] + [Y]?" (suggest merge) → type: "merge"
+- "What are the hidden components of [Z]?" (suggest fracture) → type: "fracture"
+- "How does [A] relate to [B]?" (suggest exploration) → type: "explore"
+- "What is the opposite of [X]?" (suggest counter-concept) → type: "counter"
+
+Return ONLY valid JSON:
+{"type":"merge|fracture|explore|counter","prompt":"...","suggestedNodes":["node1","node2"],"reasoning":"1-sentence reason"}`;
+
+    const reqBody = JSON.stringify({
+      model: MODEL_LITE,
+      messages: [
+        { role: 'system', content: 'You are a curious AI assistant. Return ONLY valid JSON. No markdown.' },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.7, max_tokens: 150, stream: false,
+    });
+
+    const opts = { hostname: 'api.deepseek.com', port: 443, path: '/v1/chat/completions', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Accept': 'application/json' } };
+
+    const apiReq = https.request(opts, (apiRes) => {
+      let d = '';
+      apiRes.on('data', c => { d += c; });
+      apiRes.on('end', () => {
+        try {
+          const p = JSON.parse(d);
+          const raw = p?.choices?.[0]?.message?.content?.trim() ?? '{}';
+          const cleaned = raw.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+          const result = JSON.parse(cleaned);
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify(result));
+          console.log(`[Curiosity] → ${result.type}: "${result.prompt?.slice(0, 60)}"`);
+        } catch {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ type: 'explore', prompt: `Try connecting "${keywords[0]}" and "${keywords[Math.min(1, keywords.length - 1)]}"`, suggestedNodes: [keywords[0], keywords[1] || keywords[0]], reasoning: 'Explore workspace connections' }));
+        }
+      });
+    });
+    apiReq.on('error', () => { res.writeHead(502); res.end(JSON.stringify({ error: 'Network error' })); });
+    apiReq.write(reqBody); apiReq.end();
+  });
+}
+
+// ---- Analogical Reasoning ----
+
+function handleAnalogy(req, res) {
+  if (req.method !== 'POST') { res.writeHead(405); res.end(JSON.stringify({ error: 'Method not allowed' })); return; }
+  if (!DEEPSEEK_API_KEY) { res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ answer: '?', relationship: 'unknown', confidence: 0 })); return; }
+
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', () => {
+    let parsed;
+    try { parsed = JSON.parse(body); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+
+    const a = (parsed.a || '').trim();
+    const b = (parsed.b || '').trim();
+    const c = (parsed.c || '').trim();
+    const explain = parsed.explain || false;
+
+    if (!a || !b || !c) { res.writeHead(400); res.end(JSON.stringify({ error: 'a, b, c are required' })); return; }
+
+    let prompt;
+    if (explain) {
+      prompt = `Explain WHY the analogy "${a}" is to "${b}" as "${c}" is to "${parsed.answer || '?'}" works. What is the underlying relationship? Return JSON: {"relationship":"...","explanation":"...","confidence":0-1}`;
+    } else {
+      prompt = `Complete the analogy: "${a}" is to "${b}" as "${c}" is to what? Identify the underlying relationship first, then find the best answer. Return JSON: {"answer":"...","relationship":"...","confidence":0-1,"alternatives":["alt1","alt2","alt3"]}`;
+    }
+
+    const reqBody = JSON.stringify({
+      model: MODEL_STANDARD,
+      messages: [
+        { role: 'system', content: 'You are an analogical reasoning engine. Return ONLY valid JSON. No markdown.' },
+        { role: 'user', content: prompt },
+      ],
+      temperature: explain ? 0.2 : 0.4, max_tokens: 200, stream: false,
+    });
+
+    const opts = { hostname: 'api.deepseek.com', port: 443, path: '/v1/chat/completions', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Accept': 'application/json' } };
+
+    const apiReq = https.request(opts, (apiRes) => {
+      let d = '';
+      apiRes.on('data', c => { d += c; });
+      apiRes.on('end', () => {
+        if (apiRes.statusCode !== 200) { res.writeHead(502); res.end(JSON.stringify({ error: 'API error' })); return; }
+        try {
+          const p = JSON.parse(d);
+          const raw = p?.choices?.[0]?.message?.content?.trim() ?? '{}';
+          const cleaned = raw.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+          const result = JSON.parse(cleaned);
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify(explain ? {
+            relationship: result.relationship || '',
+            explanation: result.explanation || '',
+            confidence: result.confidence ?? 0.5,
+          } : {
+            answer: result.answer || '?',
+            relationship: result.relationship || '',
+            confidence: result.confidence ?? 0.5,
+            alternatives: result.alternatives || [],
+          }));
+          console.log(`[Analogy] ${a}:${b}::${c}:${result.answer || 'explained'}`);
+        } catch { res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ answer: '?', relationship: 'unknown', confidence: 0 })); }
+      });
+    });
+    apiReq.on('error', () => { res.writeHead(502); res.end(JSON.stringify({ error: 'Network error' })); });
+    apiReq.write(reqBody); apiReq.end();
+  });
+}
+
+// ---- Ontology Classification ----
+
+function handleClassify(req, res) {
+  if (req.method !== 'POST') { res.writeHead(405); res.end(JSON.stringify({ error: 'Method not allowed' })); return; }
+  if (!DEEPSEEK_API_KEY) {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ chain: [], confidence: 0 }));
+    return;
+  }
+
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', () => {
+    let parsed;
+    try { parsed = JSON.parse(body); } catch {
+      res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return;
+    }
+    const keyword = (parsed.keyword || '').trim();
+    if (!keyword) { res.writeHead(400); res.end(JSON.stringify({ error: 'keyword required' })); return; }
+
+    const prompt = `Classify "${keyword}" into a taxonomic hierarchy. Return JSON with the full IS-A chain from most specific to most general (5-7 levels).
+For physical things: "Poodle" → ["Poodle","Dog","Mammal","Animal","Living Thing","Entity"]
+For abstract: "Justice" → ["Justice","Ethical Principle","Philosophy","Abstract Concept","Human Thought"]
+Return ONLY: {"chain":["most specific",...,"most general"],"confidence":0.0-1.0}`;
+
+    const reqBody = JSON.stringify({
+      model: MODEL_LITE,
+      messages: [
+        { role: 'system', content: 'You are a taxonomist. Return ONLY valid JSON. No markdown.' },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.2, max_tokens: 200, stream: false,
+    });
+
+    const opts = { hostname: 'api.deepseek.com', port: 443, path: '/v1/chat/completions', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Accept': 'application/json' } };
+
+    const apiReq = https.request(opts, (apiRes) => {
+      let d = '';
+      apiRes.on('data', c => { d += c; });
+      apiRes.on('end', () => {
+        if (apiRes.statusCode !== 200) { res.writeHead(200); res.end(JSON.stringify({ chain: [keyword], confidence: 0.3 })); return; }
+        try {
+          const parsed = JSON.parse(d);
+          const raw = parsed?.choices?.[0]?.message?.content?.trim() ?? '{}';
+          const cleaned = raw.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+          const result = JSON.parse(cleaned);
+          const chain = Array.isArray(result.chain) ? result.chain.map(String) : [keyword];
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ chain, confidence: result.confidence ?? 0.7 }));
+        } catch {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ chain: [keyword], confidence: 0.3 }));
+        }
+      });
+    });
+    apiReq.on('error', () => { res.writeHead(200); res.end(JSON.stringify({ chain: [keyword], confidence: 0.3 })); });
+    apiReq.write(reqBody); apiReq.end();
+  });
+}
+
+// ---- Embedding Endpoint (with local fallback) ----
+
+/** In-memory cache: text → embedding vector */
+const embedCache = new Map();
+
+/**
+ * Generate a local 128-dim embedding vector from text using character trigram hashing.
+ * Fast, deterministic, no API calls needed.
+ */
+function localEmbed(text) {
+  const dim = 128;
+  const vec = new Array(dim).fill(0);
+  const s = text.toLowerCase().trim();
+  // Character trigrams
+  for (let i = 0; i < s.length - 2; i++) {
+    const trigram = s.slice(i, i + 3);
+    let hash = 0;
+    for (let j = 0; j < 3; j++) hash = ((hash << 5) - hash + trigram.charCodeAt(j)) | 0;
+    vec[Math.abs(hash) % dim] += 1;
+  }
+  // Word-level boost
+  const words = s.split(/\s+/);
+  for (const w of words) {
+    let h = 0;
+    for (let j = 0; j < w.length; j++) h = ((h << 5) - h + w.charCodeAt(j)) | 0;
+    vec[Math.abs(h) % dim] += 2;
+  }
+  // L2 normalize
+  const norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0)) || 1;
+  return vec.map(v => v / norm);
+}
+
+/**
+ * POST /api/embed
+ * Body: { texts: string[] }
+ * Returns: { embeddings: number[][] }
+ */
+function handleEmbed(req, res) {
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'Allow': 'POST' });
+    res.end(JSON.stringify({ error: 'Method not allowed' }));
+    return;
+  }
+
+  let body = '';
+  req.on('data', chunk => { body += chunk; });
+  req.on('end', () => {
+    let parsed;
+    try { parsed = JSON.parse(body); } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid JSON body.' }));
+      return;
+    }
+
+    const texts = (parsed.texts || (parsed.text ? [parsed.text] : [])).filter(Boolean);
+    if (texts.length === 0) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'texts array is required.' }));
+      return;
+    }
+
+    // Check cache first
+    const uncached = [];
+    const embeddings = [];
+    for (const t of texts) {
+      const key = t.toLowerCase().trim();
+      if (embedCache.has(key)) {
+        embeddings.push(embedCache.get(key));
+      } else {
+        uncached.push(t);
+        embeddings.push(null); // placeholder
+      }
+    }
+
+    if (uncached.length === 0) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ embeddings }));
+      return;
+    }
+
+    // Try DeepSeek embeddings API first
+    if (DEEPSEEK_API_KEY) {
+      const reqBody = JSON.stringify({
+        model: 'text-embedding-3-small',
+        input: uncached,
+      });
+
+      const options = {
+        hostname: 'api.deepseek.com', port: 443,
+        path: '/v1/embeddings', method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
+          'Accept': 'application/json',
+        },
+      };
+
+      const apiReq = https.request(options, (apiRes) => {
+        let data = '';
+        apiRes.on('data', chunk => { data += chunk; });
+        apiRes.on('end', () => {
+          if (apiRes.statusCode === 200) {
+            try {
+              const resp = JSON.parse(data);
+              const remoteEmbeddings = resp.data?.map(d => d.embedding) || [];
+              finishEmbeddings(embeddings, uncached, remoteEmbeddings, res);
+              return;
+            } catch { /* fall through to local */ }
+          }
+          // Fallback: use local embeddings
+          const localEmbeddings = uncached.map(t => localEmbed(t));
+          finishEmbeddings(embeddings, uncached, localEmbeddings, res);
+        });
+      });
+
+      apiReq.on('error', () => {
+        const localEmbeddings = uncached.map(t => localEmbed(t));
+        finishEmbeddings(embeddings, uncached, localEmbeddings, res);
+      });
+
+      apiReq.write(reqBody);
+      apiReq.end();
+    } else {
+      // No API key: use local embeddings directly
+      const localEmbeddings = uncached.map(t => localEmbed(t));
+      finishEmbeddings(embeddings, uncached, localEmbeddings, res);
+    }
+  });
+}
+
+function finishEmbeddings(embeddings, uncached, newEmbeddings, res) {
+  // Fill in placeholders + cache
+  let ei = 0;
+  for (let i = 0; i < embeddings.length; i++) {
+    if (embeddings[i] === null) {
+      embeddings[i] = newEmbeddings[ei] || localEmbed(uncached[ei]);
+      embedCache.set(uncached[ei].toLowerCase().trim(), embeddings[i]);
+      ei++;
+    }
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(JSON.stringify({ embeddings }));
+  console.log(`[Embed] ${embeddings.length} vectors (${uncached.length} new, cached: ${embeddings.length - uncached.length})`);
+}
+
+// ---- Self-Critique Reflection Loop ----
+
+/**
+ * Reflect on an AI response and optionally regenerate with critique context.
+ * @param {string} originalPrompt - the system prompt used
+ * @param {string} firstResponse - the AI's first response text
+ * @param {string} context - optional background context
+ * @param {function} callback - called with { improved, critique, scores, attempts }
+ */
+function reflectAndImprove(originalPrompt, firstResponse, context, callback) {
+  const critiquePrompt = `You just generated this response: "${firstResponse.slice(0, 300)}"
+
+For the original task: "${originalPrompt.slice(0, 200)}"
+
+Rate your response on:
+- Accuracy (1-10)
+- Creativity (1-10)
+- Depth (1-10)
+- Relevance (1-10)
+
+Then state: should you regenerate? (yes/no) and why.
+
+Return ONLY valid JSON:
+{"scores":{"accuracy":N,"creativity":N,"depth":N,"relevance":N},"shouldRegenerate":bool,"critique":"...","suggestedImprovement":"..."}`;
+
+  const requestBody = JSON.stringify({
+    model: MODEL_STANDARD,
+    messages: [
+      { role: 'system', content: 'You are a rigorous self-critic. Return ONLY valid JSON. No markdown.' },
+      { role: 'user', content: critiquePrompt },
+    ],
+    temperature: 0.2,
+    max_tokens: 200,
+    stream: false,
+  });
+
+  const options = {
+    hostname: 'api.deepseek.com', port: 443, path: '/v1/chat/completions',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
+      'Accept': 'application/json',
+    },
+  };
+
+  const apiReq = https.request(options, (apiRes) => {
+    let data = '';
+    apiRes.on('data', chunk => { data += chunk; });
+    apiRes.on('end', () => {
+      if (apiRes.statusCode !== 200) { callback(null); return; }
+
+      try {
+        const parsed = JSON.parse(data);
+        const rawText = parsed?.choices?.[0]?.message?.content?.trim() ?? '{}';
+        const cleaned = rawText.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+        const critique = JSON.parse(cleaned);
+
+        const scores = critique.scores || {};
+        const avgScore = (scores.accuracy + scores.creativity + scores.depth + scores.relevance) / 4 || 0;
+
+        if (critique.shouldRegenerate && avgScore < 7 && DEEPSEEK_API_KEY) {
+          console.log(`[Reflect] Score ${avgScore.toFixed(1)} — regenerating: ${critique.critique?.slice(0, 80)}`);
+
+          // Regenerate with critique context
+          const regenBody = JSON.stringify({
+            model: MODEL_STANDARD,
+            messages: [
+              { role: 'system', content: originalPrompt },
+              { role: 'user', content: `Improve your previous response. Critique: ${critique.suggestedImprovement || critique.critique || 'Be more precise and creative.'}` },
+            ],
+            temperature: 0.35,
+            max_tokens: 512,
+            stream: false,
+          });
+
+          const regenReq = https.request(options, (regenRes) => {
+            let regenData = '';
+            regenRes.on('data', chunk => { regenData += chunk; });
+            regenRes.on('end', () => {
+              try {
+                const regenParsed = JSON.parse(regenData);
+                const improved = regenParsed?.choices?.[0]?.message?.content?.trim() ?? firstResponse;
+                callback({
+                  improved,
+                  critique: critique.critique || '',
+                  scores,
+                  attempts: 2,
+                  finalScore: avgScore,
+                });
+              } catch { callback(null); }
+            });
+          });
+          regenReq.on('error', () => callback(null));
+          regenReq.write(regenBody);
+          regenReq.end();
+        } else {
+          console.log(`[Reflect] Score ${avgScore.toFixed(1)} — keeping original`);
+          callback({
+            improved: firstResponse,
+            critique: critique.critique || '',
+            scores,
+            attempts: 1,
+            finalScore: avgScore,
+          });
+        }
+      } catch (err) {
+        console.error('[Reflect] Critique parse error:', err.message);
+        callback(null);
+      }
+    });
+  });
+
+  apiReq.on('error', () => callback(null));
+  apiReq.write(requestBody);
+  apiReq.end();
+}
+
+// ---- Multi-Agent Debate System ----
+
+const AGENTS = {
+  SCIENTIST:  { name: 'scientist',  system: 'You are a rigorous empirical scientist. Focus on measurable, testable, physical components. Use precise terminology.', color: '#4ECDC4' },
+  PHILOSOPHER:{ name: 'philosopher',system: 'You are a deep philosophical thinker. Focus on meaning, epistemology, fundamental axioms, and conceptual frameworks.', color: '#A78BFA' },
+  ARTIST:     { name: 'artist',     system: 'You are a creative artist. Focus on aesthetic, emotional, symbolic, and experiential components. Think metaphorically.', color: '#FFE66D' },
+};
+
+function callAgent(systemPrompt, userMessage, model = MODEL_LITE) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      model, messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Break down the concept: "${userMessage}" into 4-6 components. Return ONLY a valid JSON array of strings. No explanations.` },
+      ],
+      temperature: 0.35, max_tokens: 300, stream: false,
+    });
+
+    const req = https.request({
+      hostname: 'api.deepseek.com', port: 443, path: '/v1/chat/completions',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Accept': 'application/json' },
+    }, (resp) => {
+      let d = '';
+      resp.on('data', c => { d += c; });
+      resp.on('end', () => {
+        try {
+          const parsed = JSON.parse(d);
+          const raw = parsed?.choices?.[0]?.message?.content?.trim() ?? '';
+          const cleaned = raw.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+          const arr = JSON.parse(cleaned);
+          resolve(Array.isArray(arr) ? arr.map(String) : []);
+        } catch { resolve([]); }
+      });
+    });
+    req.on('error', () => resolve([]));
+    req.write(body); req.end();
+  });
+}
+
+function callSynthesizer(results, keyword) {
+  return new Promise((resolve) => {
+    const summary = Object.entries(results).map(([agent, comps]) =>
+      `${agent.toUpperCase()}: [${comps.join(', ')}]`
+    ).join('\n');
+
+    const body = JSON.stringify({
+      model: MODEL_STANDARD,
+      messages: [
+        {
+          role: 'system',
+          content: `You have 3 expert perspectives on the concept "${keyword}". Synthesize a FINAL list of 5-7 components that honors the strongest insights from each perspective.
+
+Return ONLY valid JSON:
+{
+  "components": ["comp1","comp2",...],
+  "perspectives": { "comp1": "scientist", "comp2": "philosopher", ... },
+  "synthesisReasoning": "1-sentence synthesis explanation"
+}`,
+        },
+        { role: 'user', content: `Expert perspectives:\n${summary}` },
+      ],
+      temperature: 0.3, max_tokens: 400, stream: false,
+    });
+
+    const req = https.request({
+      hostname: 'api.deepseek.com', port: 443, path: '/v1/chat/completions',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Accept': 'application/json' },
+    }, (resp) => {
+      let d = '';
+      resp.on('data', c => { d += c; });
+      resp.on('end', () => {
+        try {
+          const parsed = JSON.parse(d);
+          const raw = parsed?.choices?.[0]?.message?.content?.trim() ?? '{}';
+          const cleaned = raw.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+          resolve(JSON.parse(cleaned));
+        } catch { resolve({ components: [], perspectives: {}, synthesisReasoning: '' }); }
+      });
+    });
+    req.on('error', () => resolve({ components: [], perspectives: {}, synthesisReasoning: '' }));
+    req.write(body); req.end();
+  });
+}
+
+function handleDebate(req, res) {
+  if (req.method !== 'POST') {
+    res.writeHead(405); res.end(JSON.stringify({ error: 'Method not allowed' })); return;
+  }
+  if (!DEEPSEEK_API_KEY) {
+    res.writeHead(500); res.end(JSON.stringify({ error: 'DEEPSEEK_API_KEY not set' })); return;
+  }
+
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', async () => {
+    let parsed;
+    try { parsed = JSON.parse(body); } catch {
+      res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return;
+    }
+    const keyword = (parsed.keyword || '').trim();
+    const rounds = Math.max(1, Math.min(3, parseInt(parsed.rounds) || 2));
+    if (!keyword) {
+      res.writeHead(400); res.end(JSON.stringify({ error: 'keyword required' })); return;
+    }
+
+    console.log(`[Debate] "${keyword}" — ${rounds} rounds, 3 agents`);
+
+    try {
+      // Round 1: Each agent independently fractures
+      const round1 = {
+        scientist:  await callAgent(AGENTS.SCIENTIST.system, keyword),
+        philosopher: await callAgent(AGENTS.PHILOSOPHER.system, keyword),
+        artist:     await callAgent(AGENTS.ARTIST.system, keyword),
+      };
+
+      // Round 2: Each agent sees the others and revises
+      let round2 = round1;
+      if (rounds >= 2) {
+        const r2Promises = Object.entries(AGENTS).map(async ([key, agent]) => {
+          const others = Object.entries(round1)
+            .filter(([k]) => k !== key.toLowerCase())
+            .map(([k, comps]) => `${k}: [${comps.join(', ')}]`).join(' | ');
+          const revised = await callAgent(
+            `${agent.system} You just saw other perspectives: ${others}. Revise your decomposition considering their insights. Return ONLY a JSON array.`,
+            keyword,
+            MODEL_LITE
+          );
+          return [key.toLowerCase(), revised.length > 0 ? revised : round1[key.toLowerCase()]];
+        });
+        const r2Entries = await Promise.all(r2Promises);
+        round2 = Object.fromEntries(r2Entries);
+      }
+
+      // Synthesizer: combine all perspectives
+      const synthesis = await callSynthesizer(round2, keyword);
+
+      const debateLog = [
+        { round: 1, scientist: round1.scientist, philosopher: round1.philosopher, artist: round1.artist },
+      ];
+      if (rounds >= 2) {
+        debateLog.push({ round: 2, scientist: round2.scientist, philosopher: round2.philosopher, artist: round2.artist });
+      }
+
+      const response = {
+        components: synthesis.components || [],
+        perspectives: synthesis.perspectives || {},
+        synthesisReasoning: synthesis.synthesisReasoning || '',
+        debateLog,
+        model: MODEL_STANDARD,
+        tier: 'STANDARD',
+      };
+
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify(response));
+      console.log(`[Debate] "${keyword}" → ${response.components.length} components synthesized`);
+    } catch (err) {
+      console.error('[Debate] Error:', err.message);
+      res.writeHead(500); res.end(JSON.stringify({ error: err.message }));
+    }
+  });
+}
+
+// ---- External Tools & AI Agent ----
+
+const toolCache = new Map(); // key → { result, timestamp }
+const CACHE_TTL = 3600000; // 1 hour
+const toolRateLimit = new Map(); // IP → { calls, windowStart }
+
+function checkToolRate(ip) {
+  const now = Date.now();
+  const entry = toolRateLimit.get(ip) || { calls: 0, windowStart: now };
+  if (now - entry.windowStart > 60000) { entry.calls = 0; entry.windowStart = now; }
+  if (entry.calls >= 20) return false;
+  entry.calls++;
+  toolRateLimit.set(ip, entry);
+  return true;
+}
+
+function cachedFetch(key, fetcher) {
+  const cached = toolCache.get(key);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) return Promise.resolve(cached.result);
+  return fetcher().then(result => { toolCache.set(key, { result, timestamp: Date.now() }); return result; });
+}
+
+// ---- Tool Implementations ----
+
+async function searchWikipedia(query) {
+  const key = `wiki:${query.toLowerCase()}`;
+  return cachedFetch(key, () => new Promise((resolve) => {
+    const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
+    https.get(url, { headers: { 'User-Agent': 'LiquidStateEngine/1.0' } }, (resp) => {
+      let d = '';
+      resp.on('data', c => { d += c; });
+      resp.on('end', () => {
+        try { const j = JSON.parse(d); resolve(j.extract || j.title || 'No Wikipedia summary found.'); } catch { resolve('Wikipedia unavailable.'); }
+      });
+    }).on('error', () => resolve('Wikipedia unavailable.'));
+  }));
+}
+
+async function defineWord(word) {
+  const key = `dict:${word.toLowerCase()}`;
+  return cachedFetch(key, () => new Promise((resolve) => {
+    const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`;
+    https.get(url, (resp) => {
+      let d = '';
+      resp.on('data', c => { d += c; });
+      resp.on('end', () => {
+        try {
+          const j = JSON.parse(d);
+          const meaning = j[0]?.meanings?.[0]?.definitions?.[0]?.definition || 'No definition found.';
+          resolve(meaning);
+        } catch { resolve('Dictionary unavailable.'); }
+      });
+    }).on('error', () => resolve('Dictionary unavailable.'));
+  }));
+}
+
+function calculateMath(expression) {
+  try {
+    // Safe eval: only allow numbers and operators
+    const sanitized = expression.replace(/[^0-9+\-*/().%\s]/g, '');
+    const result = Function(`"use strict"; return (${sanitized})`)();
+    return String(result);
+  } catch { return 'Calculation error'; }
+}
+
+function getCurrentDate() {
+  return new Date().toISOString().split('T')[0];
+}
+
+const TOOLS = {
+  searchWikipedia: { fn: searchWikipedia, desc: 'Search Wikipedia for factual summary of a topic', args: 'query:string' },
+  defineWord: { fn: defineWord, desc: 'Get dictionary definition of a word', args: 'word:string' },
+  calculateMath: { fn: calculateMath, desc: 'Evaluate a mathematical expression', args: 'expression:string' },
+  getCurrentDate: { fn: getCurrentDate, desc: 'Get today\'s date', args: 'none' },
+};
+
+// ---- Agent Endpoint (ReAct Loop) ----
+
+function handleAgent(req, res) {
+  if (req.method !== 'POST') { res.writeHead(405); res.end(JSON.stringify({ error: 'Method not allowed' })); return; }
+  if (!DEEPSEEK_API_KEY) { res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ answer: 'AI agent unavailable — set DEEPSEEK_API_KEY', toolsUsed: [], trace: [] })); return; }
+
+  let body = '';
+  req.on('data', c => { body += c; });
+  req.on('end', async () => {
+    let parsed;
+    try { parsed = JSON.parse(body); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    const task = (parsed.task || '').trim();
+    const context = (parsed.context || '').trim();
+    if (!task) { res.writeHead(400); res.end(JSON.stringify({ error: 'task required' })); return; }
+
+    const ip = req.socket?.remoteAddress || 'unknown';
+    if (!checkToolRate(ip)) { res.writeHead(429); res.end(JSON.stringify({ error: 'Rate limit (20 calls/min)' })); return; }
+
+    const toolsUsed = [];
+    const trace = [];
+    let currentContext = context ? `Context: ${context}\nTask: ${task}` : task;
+    let finalAnswer = '';
+
+    const toolList = Object.entries(TOOLS).map(([name, t]) => `- ${name}(${t.args}): ${t.desc}`).join('\n');
+
+    for (let step = 0; step < 4; step++) {
+      const prompt = step === 0
+        ? `You are an AI agent with access to tools. Task: "${currentContext}"\n\nAvailable tools:\n${toolList}\n\nDecide: do you need a tool to answer this? Return JSON: {"action":"tool|answer","tool":"toolName","args":"argument","reasoning":"why"}\nIf you can answer directly, set action to "answer" and put your answer in a field called "answer".`
+        : `Tool result for "${toolsUsed[toolsUsed.length - 1]?.tool}": ${trace[trace.length - 1]?.result?.slice(0, 300)}\n\nTask: "${task}"\n\nCan you answer now, or do you need another tool? Return JSON: {"action":"tool|answer","tool":"...","args":"...","reasoning":"...","answer":"your final answer if action is answer"}`;
+
+      const reqBody = JSON.stringify({ model: MODEL_STANDARD, messages: [{ role: 'system', content: 'You are a tool-using AI agent. Return ONLY valid JSON.' }, { role: 'user', content: prompt }], temperature: 0.2, max_tokens: 300 });
+      const opts = { hostname: 'api.deepseek.com', port: 443, path: '/v1/chat/completions', method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Accept': 'application/json' } };
+
+      try {
+        const apiResult = await new Promise((resolve) => {
+          const apiReq = https.request(opts, (apiRes) => {
+            let d = ''; apiRes.on('data', c => { d += c; }); apiRes.on('end', () => resolve(d));
+          });
+          apiReq.on('error', () => resolve(''));
+          apiReq.write(reqBody); apiReq.end();
+        });
+
+        const p = JSON.parse(apiResult);
+        const raw = p?.choices?.[0]?.message?.content?.trim() ?? '{}';
+        const cleaned = raw.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+        const decision = JSON.parse(cleaned);
+
+        trace.push({ step, decision: decision.action, reasoning: decision.reasoning || '' });
+
+        if (decision.action === 'answer' || !decision.tool) {
+          finalAnswer = decision.answer || decision.reasoning || 'Task completed.';
+          break;
+        }
+
+        // Execute tool
+        const toolName = decision.tool;
+        const tool = TOOLS[toolName];
+        if (!tool) { finalAnswer = `Unknown tool: ${toolName}`; break; }
+
+        let toolResult;
+        try { toolResult = await tool.fn(decision.args || ''); } catch (e) { toolResult = `Tool error: ${e.message}`; }
+
+        toolsUsed.push({ tool: toolName, args: decision.args || '' });
+        trace[trace.length - 1].result = typeof toolResult === 'string' ? toolResult.slice(0, 500) : String(toolResult);
+        currentContext = `Tool result: ${trace[trace.length - 1].result}`;
+      } catch (err) {
+        trace.push({ step, error: err.message });
+        finalAnswer = 'Agent encountered an error.';
+        break;
+      }
+    }
+
+    if (!finalAnswer) finalAnswer = 'Could not resolve task within tool budget.';
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ answer: finalAnswer, toolsUsed, trace }));
+    console.log(`[Agent] "${task.slice(0, 50)}" → ${toolsUsed.length} tools → answered`);
+  });
+}
+
+// ---- Tool-Augmented Fracture (Wikipedia grounding) ----
+
+async function maybeGroundWithWikipedia(keyword) {
+  try {
+    const summary = await searchWikipedia(keyword);
+    if (summary && summary.length > 20 && !summary.includes('unavailable')) {
+      return summary.slice(0, 500);
+    }
+  } catch {}
+  return null;
+}
+
 // ---- HTTP Server ----
 
 const server = http.createServer((req, res) => {
@@ -844,6 +1813,38 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
   // API routes
+  if (url.pathname === '/api/agent') {
+    handleAgent(req, res);
+    return;
+  }
+  if (url.pathname === '/api/counterfactual') {
+    handleCounterfactual(req, res);
+    return;
+  }
+  if (url.pathname === '/api/detect-tension') {
+    handleTension(req, res);
+    return;
+  }
+  if (url.pathname === '/api/curiosity') {
+    handleCuriosity(req, res);
+    return;
+  }
+  if (url.pathname === '/api/analogy') {
+    handleAnalogy(req, res);
+    return;
+  }
+  if (url.pathname === '/api/classify') {
+    handleClassify(req, res);
+    return;
+  }
+  if (url.pathname === '/api/debate') {
+    handleDebate(req, res);
+    return;
+  }
+  if (url.pathname === '/api/embed') {
+    handleEmbed(req, res);
+    return;
+  }
   if (url.pathname === '/api/suggest') {
     handleSuggest(req, res);
     return;

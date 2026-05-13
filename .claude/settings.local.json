@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(Get-ChildItem -Recurse -File \"C:\\\\Liquid-State-Engine\\\\src\")",
+      "Bash(Select-Object FullName, Length)",
+      "Bash(cargo check *)",
+      "PowerShell(New-Item *)",
+      "Bash(cargo test *)",
+      "Bash(gh pr create --title 'feat: Phase 5 — Holographic Core \\(payload system, rules, HUD, worker, spring drag, tests\\)' --body ' *)",
+      "Bash(gh pr create --title 'perf: Phase 6 — Performance Optimization \\(10K nodes @ 60 FPS\\)' --body ' *)",
+      "Bash(Get-ChildItem -Recurse -File \"C:\\\\Users\\\\akara\\\\Liquid Information\")",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(node -e \"require\\('dotenv'\\).config\\({ path: require\\('path'\\).resolve\\(__dirname, '.env'\\) }\\); console.log\\('DEEPSEEK_API_KEY loaded:', process.env.DEEPSEEK_API_KEY ? 'YES \\(starts with ' + process.env.DEEPSEEK_API_KEY.slice\\(0,5\\) + '...\\)' : 'NO'\\)\")",
+      "Bash(node --check scripts/serve.js)",
+      "Bash(wasm-pack build *)",
+      "Bash(node --check web/main.js)",
+      "Bash(node --check web/hud/app.js)",
+      "Bash(node --check web/ai-enrich.js)",
+      "Bash(gh auth *)",
+      "Bash(node --check web/ai-memory.js)",
+      "Bash(node --check web/ai-suggest.js)",
+      "Bash(node --check web/relations-viz.js)",
+      "Bash(node --check web/particles.js)",
+      "Bash(node --check web/trails.js)",
+      "Bash(node --check web/audio.js)",
+      "Bash(node --check web/persistence.js)",
+      "Bash(node -e \"require\\('ws'\\)\")",
+      "Bash(npm install *)",
+      "Bash(node --check scripts/collab-server.js)",
+      "Bash(node --check web/collab.js)",
+      "Bash(node --check web/semantic-space.js)",
+      "Bash(node --check web/ontology.js)",
+      "Bash(node --check web/curiosity.js)",
+      "Bash(node --check web/tension-detector.js)",
+      "Bash(node --check web/meta-learner.js)"
+    ]
+  }
+}

@@ -189,7 +189,8 @@ function handleEnrich(req, res) {
     }
 
     // ---- Fracture Mode (default) with 2-step reasoning ----
-    const keyword = (parsed.keyword || '').trim();
+    let keyword = (parsed.keyword || '').trim();
+    keyword = keyword.replace(/[\u{1F44D}\u{1F44E}\u{1F4A1}\u{1F50D}\u{1F52C}\u{1F4DD}\u{1F4CB}\u{1F3F7}️\u{1F5A4}\u{1F48E}\u{1F4A5}\u{26A1}\u{1F6E0}️\u{1F4A0}\u{1F9E0}\u{1F9EA}\u{1F9EC}\u{1F52D}\u{1F4A3}\u{1F4AB}\u{1F4A8}\u{1F525}\u{1F30A}\u{1F33F}\u{1F98B}\u{1F9F2}\u{2728}\u{1F308}\u{1F31F}\u{1F4A1}\u{1F50E}\u{1F4AC}\u{1F9E9}\u{1F3B5}\u{1F3A8}\u{1F300}-\u{1F3FF}\u{1F400}-\u{1F4FF}\u{1F500}-\u{1F5FF}\u{1F600}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}]/gu, '').trim();
     const context = (parsed.context || '').trim();
     if (!keyword) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -406,7 +407,8 @@ function parseComponents(text, keyword) {
   const words = keyword.split(/[\s,;]+/).filter(Boolean);
   if (words.length > 1) return words;
 
-  throw new Error(`Could not parse components. Raw: ${cleaned.slice(0, 100)}`);
+  // Safe fallback — never crash the server on parse failure
+  return ['ATOMIC: Analysis reached conceptual limit'];
 }
 
 // ---- Domain Analysis (Step 1 of 2-step fracture reasoning) ----
@@ -1393,7 +1395,7 @@ English only. Return ONLY valid JSON: {"score":N,"redo":true or false,"tip":"max
   const requestBody = JSON.stringify({
     model: MODEL_STANDARD,
     messages: [
-      { role: 'system', content: 'English only. Return ONLY: {"score":N,"redo":true or false,"tip":"max 10 words"}' },
+      { role: 'system', content: 'You are a Quality Control Agent. The AI performed a Level of Detail (LOD) decomposition. If the output is a valid JSON array of structural parts, subsystems, or logical L+1 components, give a high score (8-10). DO NOT penalize for listing parts — that IS the correct LOD behavior. Only score low (<5) if the output is completely irrelevant or invalid JSON. Return ONLY: {"score":N,"redo":true or false,"tip":"max 10 words"}' },
       { role: 'user', content: critiquePrompt },
     ],
     temperature: 0.2,

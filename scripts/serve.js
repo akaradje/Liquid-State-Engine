@@ -37,6 +37,9 @@ const PKG = path.resolve(__dirname, '..', 'web', 'pkg');
 const DEEPSEEK_BASE = 'https://api.deepseek.com/v1';
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 
+// ---- In-Memory Knowledge Cache ----
+const knowledgeCache = new Map();
+
 // ---- Safe JSON Parse Utility ----
 
 /** Safely parse AI JSON — strips non-ASCII, fixes truncation. */
@@ -198,6 +201,15 @@ function handleEnrich(req, res) {
       return;
     }
 
+    // Cache check: return instantly if already analyzed
+    const cacheKey = keyword.toLowerCase();
+    if (knowledgeCache.has(cacheKey)) {
+      const cached = knowledgeCache.get(cacheKey);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ components: cached.components, model: 'cache', tier: 'cached', keyword, cached: true }));
+      return;
+    }
+
     // Step 1: Analyze the domain of the keyword
     analyzeDomain(keyword, (domainResult) => {
       const { domain, depth, reasoning } = domainResult;
@@ -226,7 +238,7 @@ function handleEnrich(req, res) {
       domainPrompt += ' The user may input non-English text. Always respond with English component names in a JSON array regardless of input language.';
 
       // Natural Ontology — true structural decomposition, no forced counts
-      domainPrompt += ' You are an expert Concept Analyzer. Break down the concept into its TRUE, natural subsystems or structural parts, moving DOWN EXACTLY ONE level of detail. NATURAL ONTOLOGY RULE: DO NOT force a specific number of components. Quality and structural accuracy are paramount. If a system naturally has exactly 2 main parts, return EXACTLY 2. If it has many, return the most critical 3 to 8 components for cognitive clarity. Example (System): "Human Skeleton" → ["Axial Skeleton","Appendicular Skeleton"]. Example (Part): "Joint" → ["Synovial Fluid","Cartilage","Ligaments","Tendons"]. Example (Material): "Bone" → ["Spongy Bone","Compact Bone","Bone Marrow"]. ATOMIC RULE: ONLY if the concept is a fundamental chemical, atom, or pure abstraction (e.g., "Calcium","Electron","Number 1"), return exactly: ["ATOMIC: Cannot be divided"]. OUTPUT RULE: Return ONLY a valid JSON array of strings. Do NOT wrap in markdown blockquotes or add explanations.';
+      domainPrompt += ' You are an expert Concept Analyzer. Break down the concept into its TRUE, natural subsystems or structural parts, moving DOWN EXACTLY ONE level of detail. NATURAL ONTOLOGY RULE: DO NOT force a specific number of components. Quality and structural accuracy are paramount. If a system naturally has exactly 2 main parts, return EXACTLY 2. If it has many, return the most critical 3 to 8 components for cognitive clarity. Example (System): "Human Skeleton" → {"components":["Axial Skeleton","Appendicular Skeleton"]}. Example (Part): "Joint" → {"components":["Synovial Fluid","Cartilage","Ligaments","Tendons"]}. Example (Material): "Bone" → {"components":["Spongy Bone","Compact Bone","Bone Marrow"]}. ATOMIC RULE: ONLY if the concept is a fundamental chemical, atom, or pure abstraction (e.g., "Calcium","Electron","Number 1"), return: {"components":["ATOMIC: Cannot be divided"]}. OUTPUT RULE: You MUST return a valid JSON object with EXACTLY ONE key named "components" containing an array of strings. Do NOT return a raw array. Do NOT wrap in markdown.';
 
       // Apply user profile preferences to the prompt
       const userProfile = parsed.userProfile;
@@ -266,6 +278,7 @@ function handleEnrich(req, res) {
         temperature,
         max_tokens: maxTokens,
         stream: false,
+        response_format: { type: 'json_object' },
       });
 
       const options = {
@@ -334,10 +347,11 @@ function handleEnrich(req, res) {
                   'Access-Control-Allow-Origin': '*',
                   'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier',
                 });
+                knowledgeCache.set(cacheKey, { components, model, timestamp: Date.now() });
                 res.end(responseBody);
-                console.log(`[DeepSeek] "${keyword}" → ${components.length} components (reflected: ${reflection ? 'yes' : 'no'}) via ${model}`);
+                console.log(`[DeepSeek] "${keyword}" → ${components.length} components (reflected) via ${model}`);
               });
-              return; // Don't fall through — reflection handles the response
+              return;
             }
 
             // No reflection: respond immediately
@@ -347,6 +361,7 @@ function handleEnrich(req, res) {
               grounded: !!groundedSource,
               groundedSource: groundedSource?.slice(0, 200) || null,
             });
+            knowledgeCache.set(cacheKey, { components, model, timestamp: Date.now() });
             res.writeHead(200, { 'Content-Type': 'application/json', 'X-DeepSeek-Model': model, 'X-DeepSeek-Tier': tier, 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'X-DeepSeek-Model, X-DeepSeek-Tier' });
             res.end(responseBody);
             console.log(`[DeepSeek] "${keyword}" → ${components.length} components via ${model}`);
@@ -380,15 +395,25 @@ function handleEnrich(req, res) {
 function parseComponents(text, keyword) {
   let cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();
 
-  // Force-extract the array if it's wrapped in markdown or prose
-  if (!cleaned.startsWith('[')) {
-    const match = cleaned.match(/\[.*\]/s);
-    if (match) cleaned = match[0];
+  // Force-extract JSON object or array from markdown/prose
+  if (!cleaned.startsWith('{') && !cleaned.startsWith('[')) {
+    const objMatch = cleaned.match(/\{.*\}/s);
+    if (objMatch) cleaned = objMatch[0];
+    else {
+      const arrMatch = cleaned.match(/\[.*\]/s);
+      if (arrMatch) cleaned = arrMatch[0];
+    }
   }
 
-  // Try JSON parse
+  // Try JSON parse — handle both object {components:[...]} and raw array [...]
   try {
     const parsed = JSON.parse(cleaned);
+    // Object format: { components: [...] }
+    if (parsed.components && Array.isArray(parsed.components)) {
+      const items = parsed.components.map(String).filter(s => s.trim().length > 0);
+      if (items.length > 0) return items;
+    }
+    // Raw array format: [...]
     if (Array.isArray(parsed)) {
       const items = parsed.map(String).filter(s => s.trim().length > 0);
       if (items.length > 0) return items;
@@ -409,7 +434,7 @@ function parseComponents(text, keyword) {
   if (words.length > 1) return words;
 
   // Safe fallback — never crash the server on parse failure
-  return ['ATOMIC: Analysis reached conceptual limit'];
+  return ['Conceptual Anomaly (Retry)'];
 }
 
 // ---- Domain Analysis (Step 1 of 2-step fracture reasoning) ----

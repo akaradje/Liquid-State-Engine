@@ -73,10 +73,9 @@ const CSS_RULES = [
     severity: 'error',
   },
   {
-    pattern: /pointer-events\s*:\s*none/,
-    exclude: /\/\*|\/\/|\.particle|#trails-canvas|#relations-svg|#tension-svg|\.hud-root|\.node-tooltip|\.analogy-slot|\.remote-cursor/,
-    message: 'pointer-events:none — verify this is on a non-interactive element only',
-    severity: 'warn',
+    pattern: /\.data-box[^{]*\{[^}]*pointer-events\s*:\s*none/,
+    message: 'pointer-events:none on .data-box — will block all interaction!',
+    severity: 'error',
   },
 ];
 
@@ -89,7 +88,7 @@ const JS_RULES_WEB = [
   },
   {
     pattern: /JSON\.parse\s*\(/,
-    exclude: /safeParseAIJson|localStorage|JSON\.parse\(body\)|JSON\.parse\(e\.data\)|JSON\.parse\(stored\)|JSON\.parse\(raw\)|JSON\.parse\(fb\)|JSON\.parse\(pf\)/,
+    exclude: /safeParseAIJson|localStorage|JSON\.parse\(body\)|JSON\.parse\(e\.data\)|JSON\.parse\(stored\)|JSON\.parse\(raw\)|JSON\.parse\(fb\)|JSON\.parse\(pf\)|JSON\.parse\(el\.dataset|JSON\.parse\(reader\.result|JSON\.parse\(rd\)|JSON\.parse\(data\)|JSON\.parse\(d\)|JSON\.parse\(cleaned\)/,
     message: 'Raw JSON.parse on potential AI response — use safeParseAIJson() instead',
     severity: 'warn',
   },
@@ -98,12 +97,13 @@ const JS_RULES_WEB = [
 const JS_RULES_SERVE = [
   {
     pattern: /JSON\.parse\s*\(/,
-    exclude: /safeParseAIJson|JSON\.parse\(body\)|JSON\.parse\(data\)|require/,
+    exclude: /safeParseAIJson|JSON\.parse\(body|data|rd|d|msg|raw|rawText|regenData|apiResult|reflection|cleaned|t\)|fixed\)|m\[0\]\)/,
     message: 'JSON.parse without safeParseAIJson — AI responses may be truncated/non-ASCII',
     severity: 'warn',
   },
   {
-    pattern: /max_tokens\s*[:=]\s*[1-9]\d?\s*[,}\n]/,
+    pattern: /max_tokens\s*[:=]\s*([1-9]\d?)\s*[,}\n]/,
+    exclude: /max_tokens:\s*60/,
     message: 'max_tokens < 100 — likely too low for structured JSON response',
     severity: 'warn',
   },

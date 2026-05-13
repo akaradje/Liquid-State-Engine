@@ -72,7 +72,12 @@ async function initPhysics() {
     const wasm = await import('./pkg/liquid_state_engine.js');
     await wasm.default();
     wasmMemory = wasm.__wasm?.memory;
-    if (!wasmMemory) { console.log('[Physics] Wasm memory unavailable, using static DOM'); return; }
+    if (!wasmMemory) {
+      console.log('[Physics] Wasm memory unavailable, using static DOM');
+      physicsEngine = null;
+      physicsEnabled = false;
+      return;
+    }
 
     physicsEngine = new wasm.LiquidEngine(
       window.innerWidth, window.innerHeight, 5000
@@ -81,6 +86,8 @@ async function initPhysics() {
     console.log('[Physics] Wasm engine initialized — liquid physics active');
   } catch (err) {
     console.log('[Physics] Wasm not available, using static DOM:', err.message);
+    physicsEngine = null;
+    physicsEnabled = false;
   }
 }
 
@@ -760,6 +767,7 @@ workspace.addEventListener('mousedown', (e) => {
     const box = e.target?.closest?.('.data-box');
     if (box) {
       dragTarget = box;
+      dragTarget.style.transition = 'none';
       dragTarget.classList.add('dragging');
       isDragging = true;
       dragNodeId = Number(box.dataset.id);
@@ -818,6 +826,7 @@ window.addEventListener('mouseup', () => {
     clearSimilarHighlights();
     if (dragTarget) {
       dragTarget.classList.remove('dragging');
+      dragTarget.style.transition = '';
       drawBeam(null, null);
 
       if (mergeTarget) {
@@ -861,6 +870,7 @@ function handleDragStart(pos, target) {
   const box = target.closest('.data-box');
   if (box) {
     dragTarget = box;
+    dragTarget.style.transition = 'none';
     dragTarget.classList.add('dragging');
     isDragging = true;
     dragNodeId = Number(box.dataset.id);

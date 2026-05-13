@@ -224,6 +224,9 @@ function handleEnrich(req, res) {
       // Bug 2 fix: handle non-English input gracefully
       domainPrompt += ' The user may input non-English text. Always respond with English component names in a JSON array regardless of input language.';
 
+      // Atomic Rule: prevent hallucination on indivisible concepts
+      domainPrompt += ' ATOMIC RULE: If the concept is logically, mathematically, or physically indivisible (e.g., "The Number 1", "Quark", "Nothingness", "Point"), DO NOT hallucinate random sub-components. Instead return exactly one component starting with "ATOMIC: " followed by a brief definition of why it cannot be divided. Example: ["ATOMIC: The fundamental mathematical unit"].';
+
       // Apply user profile preferences to the prompt
       const userProfile = parsed.userProfile;
       if (userProfile) {
@@ -532,7 +535,13 @@ function handleMerge(keywordA, keywordB, res, context = '', retryCount = 0) {
     messages: [
       {
         role: 'system',
-        content: `Combine "${keywordA}" and "${keywordB}" into ONE emergent word. Return ONLY JSON: {"result":"NewConcept","reasoning":"1 sentence","emergentProperty":"what is genuinely new","confidence":0.0-1.0}. Example: {"result":"Steam","reasoning":"Water heated by fire becomes gaseous","emergentProperty":"Phase transition from liquid to gas","confidence":0.85}`,
+        content: `You are an avant-garde Conceptual Synthesizer and Master Alchemist. Your task is to combine "${keywordA}" and "${keywordB}" into a SINGLE NEW WORD or short phrase (max 2 words).
+
+CRITICAL RULES:
+1. NEVER just hyphenate the words (e.g., A-B).
+2. NEVER use lazy prefixes like 'Compound', 'Synthesis', or 'Hybrid'.
+3. If the concepts are completely unrelated or absurd (e.g., "Quantum Mechanics" + "Spicy Papaya Salad"), invent a highly creative, metaphorical, or sci-fi concept that bridges their core meanings (e.g., "Entangled Spice", "Probabilistic Flavor").
+4. Return ONLY valid JSON: {"result":"NewConcept","reasoning":"1 sentence","emergentProperty":"what is genuinely new","confidence":0.0-1.0}. Example: {"result":"Steam","reasoning":"Water heated by fire becomes gaseous","emergentProperty":"Phase transition from liquid to gas","confidence":0.85}`,
       },
       {
         role: 'user',
@@ -588,7 +597,7 @@ function handleMerge(keywordA, keywordB, res, context = '', retryCount = 0) {
             return;
           }
 
-          const finalResult = result || 'Emergent Compound';
+          const finalResult = result || 'Anomalous Entity';
 
           // Self-critique reflection for merge
           const mergeSysPrompt = 'You are a Knowledge Synthesizer. Find EMERGENT PROPERTIES from concept intersections.';

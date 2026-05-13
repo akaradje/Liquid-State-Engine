@@ -11,7 +11,7 @@
 
 const http = require('http');
 
-const BASE = 'http://localhost:8080';
+const BASE = 'http://127.0.0.1:8080';
 const DELAY = process.argv.includes('--quick') ? 200 : 1000;
 
 let passed = 0, failed = 0, total = 0;
@@ -71,14 +71,19 @@ async function main() {
   console.log('\n🧪 Liquid-State Engine — AI Test Suite\n');
   console.log(`   Server: ${BASE}\n`);
 
-  // Check server is running
+  // Check server is running (TCP-level check, more lenient)
   try {
-    await httpRequest('GET', '/', null);
+    await new Promise((resolve, reject) => {
+      const req = http.request({ hostname: '127.0.0.1', port: 8080, path: '/', method: 'GET', timeout: 5000 }, () => resolve());
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+      req.end();
+    });
+    console.log('   ✓ Server is running\n');
   } catch {
-    console.error('❌ Server not running at http://localhost:8080\n   Start with: npm run serve\n');
+    console.error('❌ Cannot connect to 127.0.0.1:8080 — is the server running in another terminal?\n   Start with: npm run serve\n');
     process.exit(1);
   }
-  console.log('   ✓ Server is running\n');
 
   // ---- Test 1: Fracture (Thai) ----
   await testEndpoint('Fracture (Thai: "รถ")', 'POST', '/api/enrich', { keyword: 'รถ' }, (res) => {

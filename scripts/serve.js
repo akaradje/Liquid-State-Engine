@@ -853,13 +853,13 @@ function handleSuggest(req, res) {
     const prompt = `Think outside the box. Given these workspace concepts: ${keywords.join(', ')}. Suggest 3 completely NEW concepts from different domains that would create fascinating emergent properties when combined with any existing concept. Be creative and unexpected. Return ONLY a valid JSON array of exactly 3 strings. Example: ["Entropy", "Bioluminescence", "Recursion"]`;
 
     const requestBody = JSON.stringify({
-      model: MODEL_LITE,
+      model: MODEL_STANDARD,
       messages: [
-        { role: 'system', content: 'You are a creative suggestion engine. Return ONLY a JSON array of exactly 3 strings. No markdown, no explanations.' },
+        { role: 'system', content: 'You are a creative suggestion engine. Return ONLY a JSON array of exactly 3 strings. No markdown, no explanations. Never return an empty array.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.8,
-      max_tokens: 100,
+      max_tokens: 150,
       stream: false,
     });
 
@@ -1001,7 +1001,7 @@ function handleTension(req, res) {
 
     // Detect tensions
     const prompt = `Identify conceptual frictions among these: ${keywords.join(', ')}. Even subtle opposites like "Order" vs "Chaos" or "Light" vs "Dark" MUST be detected. Return at least 2 pairs if they exist in the list. Intensity should be 0.8+ for direct opposites. Return ONLY JSON: {"tensions":[{"a":"ConceptA","b":"ConceptB","type":"opposition|paradox|dialectic","intensity":0.0-1.0,"explanation":"1 sentence"}]}`;
-    const reqBody = JSON.stringify({ model: MODEL_LITE, messages: [{ role:'system', content:'You are a dialectical analyst. Return ONLY JSON.' },{ role:'user', content: prompt }], temperature:0.3, max_tokens:300, stream:false });
+    const reqBody = JSON.stringify({ model: MODEL_STANDARD, messages: [{ role:'system', content:'You are a dialectical analyst. Find tensions and oppositions. Return ONLY valid JSON, no markdown.' },{ role:'user', content: prompt }], temperature:0.4, max_tokens:300, stream:false });
     const opts = { hostname:'api.deepseek.com', port:443, path:'/v1/chat/completions', method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${DEEPSEEK_API_KEY}`, 'Accept':'application/json' } };
     const apiReq = https.request(opts, (apiRes) => { let d=''; apiRes.on('data',c=>{d+=c}); apiRes.on('end',()=>{ try { const p=JSON.parse(d); const r=p?.choices?.[0]?.message?.content?.trim()??'{}'; const c=r.replace(/```(?:json)?\s*/gi,'').replace(/```/g,'').trim(); const t=JSON.parse(c); tensionCache.hash=hash; tensionCache.tensions=t.tensions||[]; res.writeHead(200,{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}); res.end(JSON.stringify({tensions:tensionCache.tensions})); console.log(`[Tension] ${tensionCache.tensions.length} pairs detected`); } catch { res.writeHead(200,{'Content-Type':'application/json','Access-Control-Allow-Origin':'*'}); res.end(JSON.stringify({tensions:[]})); } }); });
     apiReq.on('error',()=>{ res.writeHead(502); res.end(JSON.stringify({error:'Network error'})); });
@@ -1181,7 +1181,7 @@ function handleClassify(req, res) {
     const reqBody = JSON.stringify({
       model: MODEL_LITE,
       messages: [
-        { role: 'system', content: 'You are a taxonomist. Return ONLY valid JSON. No markdown.' },
+        { role: 'system', content: 'You are a strict taxonomist. You MUST return exactly 6 taxonomy levels from specific to most general. Never return fewer than 5 levels. Return ONLY valid JSON. No markdown.' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.2, max_tokens: 200, stream: false,
@@ -1194,24 +1194,28 @@ function handleClassify(req, res) {
       let d = '';
       apiRes.on('data', c => { d += c; });
       apiRes.on('end', () => {
-        if (apiRes.statusCode !== 200) { res.writeHead(200); res.end(JSON.stringify({ chain: [keyword], confidence: 0.3 })); return; }
+        if (apiRes.statusCode !== 200) { res.writeHead(200); res.end(JSON.stringify({ chain: buildDefaultChain(keyword), confidence: 0.3 })); return; }
         try {
           const parsed = JSON.parse(d);
           const raw = parsed?.choices?.[0]?.message?.content?.trim() ?? '{}';
           const cleaned = raw.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
           const result = JSON.parse(cleaned);
-          const chain = Array.isArray(result.chain) ? result.chain.map(String) : [keyword];
+          const chain = Array.isArray(result.chain) ? result.chain.map(String) : buildDefaultChain(keyword);
           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-          res.end(JSON.stringify({ chain, confidence: result.confidence ?? 0.7 }));
+          res.end(JSON.stringify({ chain: chain.length >= 3 ? chain : buildDefaultChain(keyword), confidence: result.confidence ?? 0.7 }));
         } catch {
           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-          res.end(JSON.stringify({ chain: [keyword], confidence: 0.3 }));
+          res.end(JSON.stringify({ chain: buildDefaultChain(keyword), confidence: 0.3 }));
         }
       });
     });
-    apiReq.on('error', () => { res.writeHead(200); res.end(JSON.stringify({ chain: [keyword], confidence: 0.3 })); });
+    apiReq.on('error', () => { res.writeHead(200); res.end(JSON.stringify({ chain: buildDefaultChain(keyword), confidence: 0.3 })); });
     apiReq.write(reqBody); apiReq.end();
   });
+}
+
+function buildDefaultChain(keyword) {
+  return [keyword, 'Concept', 'Abstraction', 'Information', 'System', 'Entity'];
 }
 
 // ---- Embedding Endpoint (with local fallback) ----

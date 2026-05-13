@@ -40,22 +40,17 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 // ---- Safe JSON Parse Utility ----
 
 /** Safely parse AI JSON — strips non-ASCII, fixes truncation. */
-function safeParseAIJson(rawText, fallback = null) {
-  if (!rawText || !rawText.trim()) return fallback;
-  let text = rawText.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
-  text = text.replace(/[^\x00-\x7F]/g, '');
-  text = text.replace(/:\s*""\s*([,}])/g, ':"stripped"$1');
-  try { return JSON.parse(text); } catch(e) {}
-  const objMatch = text.match(/\{[^{}]*\}/);
-  if (objMatch) try { return JSON.parse(objMatch[0]); } catch(e) {}
-  let fixed = text;
-  fixed = fixed.replace(/,?\s*"[^"]*$/, '');
-  fixed = fixed.replace(/,?\s*"[^"]*"\s*:\s*"?[^"}]*$/, '');
-  const ob = (fixed.match(/\{/g) || []).length, cb = (fixed.match(/\}/g) || []).length;
-  const osb = (fixed.match(/\[/g) || []).length, csb = (fixed.match(/\]/g) || []).length;
-  fixed += ']'.repeat(Math.max(0, osb - csb));
-  fixed += '}'.repeat(Math.max(0, ob - cb));
-  try { return JSON.parse(fixed); } catch(e) {}
+function safeParseAIJson(raw, fallback) {
+  if (!raw || !raw.trim()) return fallback;
+  let t = raw.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+  t = t.replace(/[^\x00-\x7F]/g, '');
+  t = t.replace(/:\s*""\s*([,}])/g, ':"n/a"$1');
+  try { return JSON.parse(t); } catch(e) {}
+  const m = t.match(/\{[^{}]*\}/);
+  if (m) try { return JSON.parse(m[0]); } catch(e) {}
+  t = t.replace(/,?\s*"[^"]*$/, '');
+  t += '}'.repeat(Math.max(0, (t.match(/\{/g) || []).length - (t.match(/\}/g) || []).length));
+  try { return JSON.parse(t); } catch(e) {}
   return fallback;
 }
 
@@ -221,7 +216,7 @@ function handleEnrich(req, res) {
         : maybeGroundWithWikipedia(keyword);
 
       groundingPromise.then((groundedSource) => {
-      const { domainPrompt } = applyGrounding(groundedSource);
+      let { domainPrompt } = applyGrounding(groundedSource);
 
       // Step 2: Build domain-specific decomposition prompt
       // (domainPrompt already computed by applyGrounding)
@@ -435,7 +430,7 @@ function analyzeDomain(keyword, callback) {
     messages: [
       {
         role: 'system',
-        content: 'Classify the domain of the given concept. You MUST respond in English only. Do NOT use Thai, Chinese, or any non-ASCII characters in your response. Return ONLY this exact JSON structure with short English values: {"domain":"science|technology|philosophy|art|nature|social|general","depth":N,"reasoning":"max 10 English words"}',
+        content: 'Respond in English ONLY. No Thai, no Unicode. Return ONLY: {"domain":"one of: science|technology|philosophy|art|nature|social|general","depth":N,"reasoning":"max 10 words"}',
       },
       { role: 'user', content: keyword },
     ],
@@ -1393,16 +1388,16 @@ function reflectAndImprove(originalPrompt, firstResponse, context, callback) {
 Return ONLY this short JSON (no markdown):
 {"score":N,"redo":true/false,"tip":"max 15 words english"}
 
-CRITICAL RULES: Respond in English ONLY. Keep ALL text values under 20 words. Your entire JSON response must be under 300 characters total.`;
+English only. Return ONLY valid JSON: {"score":N,"redo":true or false,"tip":"max 10 words"}`;
 
   const requestBody = JSON.stringify({
     model: MODEL_STANDARD,
     messages: [
-      { role: 'system', content: 'You are a critic. Follow ALL rules in the prompt. CRITICAL: Respond ONLY in English. Keep response under 300 characters. Return ONLY valid JSON, no markdown.' },
+      { role: 'system', content: 'English only. Return ONLY: {"score":N,"redo":true or false,"tip":"max 10 words"}' },
       { role: 'user', content: critiquePrompt },
     ],
     temperature: 0.2,
-    max_tokens: 250,
+    max_tokens: 200,
     stream: false,
   });
 
